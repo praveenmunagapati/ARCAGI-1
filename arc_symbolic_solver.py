@@ -459,17 +459,18 @@ class PureSymbolicSolverV3:
         # Hollow rectangular frame interior crop (solves 1c786137)
         def crop_hollow_frame(g):
             h, w = g.shape
-            for c in range(1, 10):
-                for r1 in range(h):
-                    for r2 in range(r1+2, h):
-                        for c1 in range(w):
-                            for c2 in range(c1+2, w):
-                                if (r2 - r1 >= 2 and c2 - c1 >= 2 and
-                                    np.all(g[r1, c1:c2+1] == c) and
-                                    np.all(g[r2, c1:c2+1] == c) and
-                                    np.all(g[r1:r2+1, c1] == c) and
-                                    np.all(g[r1:r2+1, c2] == c)):
-                                    return g[r1+1:r2, c1+1:c2]
+            colors_in = [c for c in np.unique(g) if c != 0]
+            for c in colors_in:
+                rows, cols = np.where(g == c)
+                if len(rows) >= 8:
+                    r1, r2 = rows.min(), rows.max()
+                    c1, c2 = cols.min(), cols.max()
+                    if (r2 - r1 >= 2 and c2 - c1 >= 2 and
+                        np.all(g[r1, c1:c2+1] == c) and
+                        np.all(g[r2, c1:c2+1] == c) and
+                        np.all(g[r1:r2+1, c1] == c) and
+                        np.all(g[r1:r2+1, c2] == c)):
+                        return g[r1+1:r2, c1+1:c2]
             return g
         cands.append(crop_hollow_frame)
 
@@ -629,7 +630,10 @@ class PureSymbolicSolverV3:
     # --------------------------------------------------------
     def _lines(self, train) -> list[Prog]:
         cands: list[Prog] = []
-        for rc in range(10):
+        diff_cols = set().union(*[set(map(int, np.unique(out[inp != out]))) for inp, out in train if inp.shape == out.shape])
+        cand_colors = [0] + sorted(diff_cols)
+
+        for rc in cand_colors:
             def mk_conn(fill_col=rc):
                 def connect(g):
                     h,w=g.shape; out=g.copy()
@@ -649,7 +653,7 @@ class PureSymbolicSolverV3:
             cands.append(mk_conn())
 
         # Wireframe BBox Perimeter of marker dots
-        for rc in range(10):
+        for rc in cand_colors:
             def mk_wireframe(fill_col=rc):
                 def fn(g):
                     h, w = g.shape; out = g.copy()
@@ -669,7 +673,7 @@ class PureSymbolicSolverV3:
             cands.append(mk_wireframe())
 
         # 45-degree diagonal rays
-        for rc in range(10):
+        for rc in cand_colors:
             def mk_diag(fill_col=rc):
                 def fn(g):
                     h, w = g.shape; out = g.copy()
@@ -690,8 +694,10 @@ class PureSymbolicSolverV3:
 
     def _diamond_dilation(self, train) -> list[Prog]:
         cands: list[Prog] = []
+        diff_cols = set().union(*[set(map(int, np.unique(out[inp != out]))) for inp, out in train if inp.shape == out.shape])
+        cand_colors = [0] + sorted(diff_cols)
         for radius in (1, 2, 3):
-            for target_c in range(10):
+            for target_c in cand_colors:
                 def mk(rad=radius, tc=target_c):
                     def fn(g):
                         h, w = g.shape; out = g.copy()
