@@ -1,0 +1,10 @@
+{
+  "engine": "Pure Symbolic Engine v3 (Strict Non-LLM)",
+  "split": "all",
+  "tasks": 800,
+  "fit": 70,
+  "top1": 62,
+  "top2": 63,
+  "total_time_seconds": 91.66035510000074,
+  "avg_ms_per_task": 114.57544387500093
+}

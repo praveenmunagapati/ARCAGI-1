@@ -1,0 +1,9 @@
+{
+  "architecture": "Hybrid Induction + Transduction (Cornell 1st Place Paradigm)",
+  "split": "training",
+  "tasks": 400,
+  "training_fit": 35,
+  "exact_solved_top2": 32,
+  "total_time_seconds": 33.86301870000443,
+  "avg_ms_per_task": 84.65754675001108
+}
