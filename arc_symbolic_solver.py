@@ -446,7 +446,7 @@ class PureSymbolicSolverV3:
         return cands
 
     # --------------------------------------------------------
-    # 10. Cropping
+    # 10. Cropping & Subgrid Extractions
     # --------------------------------------------------------
     def _cropping(self, train) -> list[Prog]:
         cands: list[Prog] = []
@@ -456,6 +456,61 @@ class PureSymbolicSolverV3:
             return g[r.min():r.max()+1, c.min():c.max()+1]
         cands.append(crop_nz)
         
+        # Hollow rectangular frame interior crop (solves 1c786137)
+        def crop_hollow_frame(g):
+            h, w = g.shape
+            for c in range(1, 10):
+                for r1 in range(h):
+                    for r2 in range(r1+2, h):
+                        for c1 in range(w):
+                            for c2 in range(c1+2, w):
+                                if (r2 - r1 >= 2 and c2 - c1 >= 2 and
+                                    np.all(g[r1, c1:c2+1] == c) and
+                                    np.all(g[r2, c1:c2+1] == c) and
+                                    np.all(g[r1:r2+1, c1] == c) and
+                                    np.all(g[r1:r2+1, c2] == c)):
+                                    return g[r1+1:r2, c1+1:c2]
+            return g
+        cands.append(crop_hollow_frame)
+
+        # Symmetric BBox Quadrants (solves 2013d3e2)
+        for q in ("tl", "tr", "bl", "br"):
+            def mk_quad(quad=q):
+                def fn(g):
+                    rows, cols = np.where(g != 0)
+                    if len(rows) == 0: return g
+                    sub = g[rows.min():rows.max()+1, cols.min():cols.max()+1]
+                    sh, sw = sub.shape
+                    if quad == "tl": return sub[:sh//2, :sw//2]
+                    elif quad == "tr": return sub[:sh//2, sw//2:]
+                    elif quad == "bl": return sub[sh//2:, :sw//2]
+                    elif quad == "br": return sub[sh//2:, sw//2:]
+                    return sub
+                return fn
+            cands.append(mk_quad())
+
+        # Panel with Anomaly / Outlier (solves 2dc579da)
+        def panel_anomaly(g):
+            h, w = g.shape
+            for dc in range(10):
+                dr = [r for r in range(h) if np.all(g[r,:]==dc)]
+                dcc = [c for c in range(w) if np.all(g[:,c]==dc)]
+                rs = [-1]+dr+[h]; cs_list = [-1]+dcc+[w]
+                panels = []
+                for i in range(len(rs)-1):
+                    r1, r2 = rs[i]+1, rs[i+1]
+                    for j in range(len(cs_list)-1):
+                        c1, c2 = cs_list[j]+1, cs_list[j+1]
+                        if r2>r1 and c2>c1: panels.append(g[r1:r2, c1:c2])
+                if len(panels) >= 2:
+                    col_sets = [set(map(int, np.unique(p))) - {0, dc} for p in panels]
+                    for idx, cset in enumerate(col_sets):
+                        other_colors = set().union(*[col_sets[j] for j in range(len(panels)) if j != idx])
+                        if len(cset - other_colors) > 0:
+                            return panels[idx]
+            return g
+        cands.append(panel_anomaly)
+
         for fc in range(10):
             def mk_frame(f=fc):
                 def fn(g):
@@ -574,18 +629,63 @@ class PureSymbolicSolverV3:
     # --------------------------------------------------------
     def _lines(self, train) -> list[Prog]:
         cands: list[Prog] = []
-        def connect(g):
-            h,w=g.shape; out=g.copy()
-            for cl in np.unique(g):
-                if cl==0: continue
-                rs,cs=np.where(g==cl); pts=list(zip(rs,cs))
-                for i in range(len(pts)):
-                    for j in range(i+1,len(pts)):
-                        r1,c1=pts[i]; r2,c2=pts[j]
-                        if r1==r2: out[r1,min(c1,c2):max(c1,c2)+1]=cl
-                        elif c1==c2: out[min(r1,r2):max(r1,r2)+1,c1]=cl
-            return out
-        cands.append(connect)
+        for rc in range(10):
+            def mk_conn(fill_col=rc):
+                def connect(g):
+                    h,w=g.shape; out=g.copy()
+                    for cl in np.unique(g):
+                        if cl==0: continue
+                        rs,cs=np.where(g==cl); pts=list(zip(rs,cs))
+                        for i in range(len(pts)):
+                            for j in range(i+1,len(pts)):
+                                r1,c1=pts[i]; r2,c2=pts[j]
+                                col = fill_col if fill_col != 0 else cl
+                                if r1==r2:
+                                    out[r1,min(c1,c2):max(c1,c2)+1] = np.where(out[r1,min(c1,c2):max(c1,c2)+1]==0, col, out[r1,min(c1,c2):max(c1,c2)+1])
+                                elif c1==c2:
+                                    out[min(r1,r2):max(r1,r2)+1,c1] = np.where(out[min(r1,r2):max(r1,r2)+1,c1]==0, col, out[min(r1,r2):max(r1,r2)+1,c1])
+                    return out
+                return connect
+            cands.append(mk_conn())
+
+        # Wireframe BBox Perimeter of marker dots
+        for rc in range(10):
+            def mk_wireframe(fill_col=rc):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    for cl in np.unique(g):
+                        if cl == 0: continue
+                        rows, cols = np.where(g == cl)
+                        if len(rows) >= 2:
+                            r1, r2 = rows.min(), rows.max()
+                            c1, c2 = cols.min(), cols.max()
+                            col = fill_col if fill_col != 0 else cl
+                            out[r1, c1:c2+1] = np.where(out[r1, c1:c2+1] == 0, col, out[r1, c1:c2+1])
+                            out[r2, c1:c2+1] = np.where(out[r2, c1:c2+1] == 0, col, out[r2, c1:c2+1])
+                            out[r1:r2+1, c1] = np.where(out[r1:r2+1, c1] == 0, col, out[r1:r2+1, c1])
+                            out[r1:r2+1, c2] = np.where(out[r1:r2+1, c2] == 0, col, out[r1:r2+1, c2])
+                    return out
+                return fn
+            cands.append(mk_wireframe())
+
+        # 45-degree diagonal rays
+        for rc in range(10):
+            def mk_diag(fill_col=rc):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                col = fill_col if fill_col != 0 else g[r, c]
+                                for dr, dc in ((-1,-1),(-1,1),(1,-1),(1,1)):
+                                    cr, cc = r + dr, c + dc
+                                    while 0 <= cr < h and 0 <= cc < w:
+                                        if out[cr, cc] == 0: out[cr, cc] = col
+                                        cr += dr; cc += dc
+                    return out
+                return fn
+            cands.append(mk_diag())
+
         return cands
 
     def _diamond_dilation(self, train) -> list[Prog]:
