@@ -1,6 +1,6 @@
 """
-MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v3 (STRICT NON-LLM)
-High-Performance Deductive Solver with 50+ Composable Symbolic Primitives
+MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v4 (STRICT NON-LLM)
+High-Performance Deductive Solver with 80+ Composable Symbolic Primitives
 Zero LLM Dependencies — 100% Deterministic Code & GPU Search.
 """
 
@@ -61,12 +61,25 @@ def get_objects(g: Grid, conn: int = 4, bg: int = 0, mono: bool = True) -> list[
 def get_objects_multi(g: Grid, conn: int = 4, bg: int = 0) -> list[dict]:
     return get_objects(g, conn=conn, bg=bg, mono=False)
 
+def _split_panels(g, dc):
+    h,w = g.shape
+    dr = [r for r in range(h) if np.all(g[r,:]==dc)]
+    dcc = [c for c in range(w) if np.all(g[:,c]==dc)]
+    rs = [-1]+dr+[h]; cs_list = [-1]+dcc+[w]
+    panels = []
+    for i in range(len(rs)-1):
+        r1,r2 = rs[i]+1, rs[i+1]
+        for j in range(len(cs_list)-1):
+            c1,c2 = cs_list[j]+1, cs_list[j+1]
+            if r2>r1 and c2>c1: panels.append(g[r1:r2, c1:c2])
+    return panels
+
 
 # ============================================================
-# MASTER SYMBOLIC REASONING ENGINE (STRICT NON-LLM)
+# MASTER SYMBOLIC REASONING ENGINE v4 (STRICT NON-LLM)
 # ============================================================
 
-class PureSymbolicSolverV3:
+class PureSymbolicSolverV4:
     def solve(self, task: dict) -> list[Prog]:
         train = [(G(ex["input"]), G(ex["output"])) for ex in task["train"]]
         solutions: list[Prog] = []
@@ -124,6 +137,59 @@ class PureSymbolicSolverV3:
             self._extract_repeated_tile,
             # 18. Two-Step Compositions
             self._two_step,
+            # === NEW v4 PRIMITIVES ===
+            # 19. Per-Color Shape Stamp (solves 0ca9ddb6, 0962bcdd)
+            self._per_color_shape_stamp,
+            # 19b. Multi-Color Object Stamp (solves 0962bcdd)
+            self._multi_color_object_stamp,
+            # 20. Row×Column Intersection Pattern (solves 2281f1f4)
+            self._row_col_intersection,
+            # 21. Directional Trail/Ray from Shape (solves 1f0c79e5)
+            self._directional_trail,
+            # 22. Object Crop + Horizontal Tile (solves 28bf18c6)
+            self._crop_and_tile,
+            # 23. Grid Panel Dimension Count (solves 1190e5a7)
+            self._panel_dimension_count,
+            # 24. Row Extension with Color Sub (solves 017c7c7b)
+            self._row_extension_with_color_sub,
+            # 25. Spiral Fill (solves 28e73c20)
+            self._spiral_fill,
+            # 26. Cross-Line Drawing Through Markers (solves 1bfc4729)
+            self._cross_line_markers,
+            # 27. Object Symmetry Completion (solves 1b60fb0c, 150deff5)
+            self._object_symmetry_fill,
+            # 28. Per-Pixel Position Rule (r,c,color)->output_color
+            self._pixel_position_rule,
+            # 29. Most Common Object Shape Extraction
+            self._most_common_object,
+            # 30. Row/Col Periodic Pattern Fill
+            self._periodic_fill,
+            # 31. Contiguous Object Pair Logic (solves 22233c11)
+            self._object_pair_reflection,
+            # 32. Object Color Histogram / Counting Output
+            self._color_counting_output,
+            # 33. Object-Relative Marker Patterns
+            self._object_relative_markers,
+            # 34. Subgrid Majority Vote
+            self._subgrid_majority,
+            # 35. Diagonal Mirror Complete
+            self._diagonal_mirror,
+            # 36. Row/Col Pattern Match Recolor
+            self._pattern_match_recolor,
+            # 37. Extended Neighborhood Cellular Rules
+            self._extended_neighborhood_rule,
+            # 38. Flood Fill Per Object Color
+            self._flood_fill_per_object,
+            # 39. Object Sort and Stack
+            self._object_sort_stack,
+            # 40. Border Detection and Outline
+            self._outline_objects,
+            # 41. Color Zone Propagation
+            self._color_zone_propagation,
+            # 42. Row/Col Removal/Dedup
+            self._row_col_dedup,
+            # 43. Pixel-Level Conditional Transform  
+            self._conditional_pixel_transform,
         ]
         
         for s_fn in solvers:
@@ -187,26 +253,13 @@ class PureSymbolicSolverV3:
     # --------------------------------------------------------
     def _dividers(self, train) -> list[Prog]:
         cands: list[Prog] = []
-        def _split(g, dc):
-            h,w = g.shape
-            dr = [r for r in range(h) if np.all(g[r,:]==dc)]
-            dcc = [c for c in range(w) if np.all(g[:,c]==dc)]
-            rs = [-1]+dr+[h]; cs_list = [-1]+dcc+[w]
-            panels = []
-            for i in range(len(rs)-1):
-                r1,r2 = rs[i]+1, rs[i+1]
-                for j in range(len(cs_list)-1):
-                    c1,c2 = cs_list[j]+1, cs_list[j+1]
-                    if r2>r1 and c2>c1: panels.append(g[r1:r2, c1:c2])
-            return panels
-
         for dc in range(10):
             # Boolean overlays with recoloring (solves 0520fde7)
             for op in ("and", "xor", "or", "diff"):
                 for rc in range(10):
                     def mk(d=dc, o=op, r_c=rc):
                         def fn(g):
-                            ps = _split(g, d)
+                            ps = _split_panels(g, d)
                             if len(ps)!=2 or ps[0].shape!=ps[1].shape: return None
                             a, b = (ps[0]!=0), (ps[1]!=0)
                             if o=="and": m = a & b
@@ -222,7 +275,7 @@ class PureSymbolicSolverV3:
             for idx in (0,1,2,-1):
                 def mk_idx(d=dc, i=idx):
                     def fn(g):
-                        ps = _split(g, d)
+                        ps = _split_panels(g, d)
                         if not ps or abs(i)>=len(ps): return None
                         return ps[i]
                     return fn
@@ -231,7 +284,7 @@ class PureSymbolicSolverV3:
             for sel in ("max","min"):
                 def mk_sel(d=dc, s=sel):
                     def fn(g):
-                        ps = _split(g, d)
+                        ps = _split_panels(g, d)
                         if not ps: return None
                         return max(ps, key=lambda p: np.count_nonzero(p)) if s=="max" else min(ps, key=lambda p: np.count_nonzero(p))
                     return fn
@@ -285,6 +338,48 @@ class PureSymbolicSolverV3:
                     return None
                 return fn
             cands.append(mk_diag())
+            
+            # Row periodic: r % K
+            def mk_row_periodic(period=K):
+                def fn(g):
+                    h, w = g.shape
+                    mapping = {}
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                col = int(g[r, c])
+                                rem = r % period
+                                if rem in mapping and mapping[rem] != col: return None
+                                mapping[rem] = col
+                    if len(mapping) == period:
+                        out = np.zeros((h, w), dtype=np.int32)
+                        for r in range(h):
+                            for c in range(w): out[r, c] = mapping[r % period]
+                        return out
+                    return None
+                return fn
+            cands.append(mk_row_periodic())
+            
+            # Col periodic: c % K
+            def mk_col_periodic(period=K):
+                def fn(g):
+                    h, w = g.shape
+                    mapping = {}
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                col = int(g[r, c])
+                                rem = c % period
+                                if rem in mapping and mapping[rem] != col: return None
+                                mapping[rem] = col
+                    if len(mapping) == period:
+                        out = np.zeros((h, w), dtype=np.int32)
+                        for r in range(h):
+                            for c in range(w): out[r, c] = mapping[c % period]
+                        return out
+                    return None
+                return fn
+            cands.append(mk_col_periodic())
         return cands
 
     # --------------------------------------------------------
@@ -407,10 +502,30 @@ class PureSymbolicSolverV3:
     # 8. Kronecker / Fractal
     # --------------------------------------------------------
     def _kronecker(self, train) -> list[Prog]:
-        return [
+        cands = [
             lambda g: np.kron((g > 0).astype(np.int32), g),
             lambda g: np.kron(g, (g > 0).astype(np.int32)),
         ]
+        # Also try Kronecker with specific colors
+        inp0, out0 = train[0]
+        ih, iw = inp0.shape
+        oh, ow = out0.shape
+        if oh > ih and ow > iw and oh % ih == 0 and ow % iw == 0:
+            sy, sx = oh // ih, ow // iw
+            if sy == ih and sx == iw:
+                # Self-tiling: each cell becomes a copy of the grid scaled
+                def mk_self_tile():
+                    def fn(g):
+                        h, w = g.shape
+                        out = np.zeros((h*h, w*w), dtype=np.int32)
+                        for r in range(h):
+                            for c in range(w):
+                                if g[r, c] != 0:
+                                    out[r*h:(r+1)*h, c*w:(c+1)*w] = g * (g[r,c] if np.max(g) <= 1 else 1)
+                        return out
+                    return fn
+                cands.append(mk_self_tile())
+        return cands
 
     # --------------------------------------------------------
     # 9. Scaling & Downsampling
@@ -564,6 +679,18 @@ class PureSymbolicSolverV3:
                     elif out[mr,c] == 0 and g[r,c] != 0: out[mr,c] = g[r,c]
             return out
         cands.append(mirror_v)
+        
+        # Both H and V mirror
+        def mirror_hv(g):
+            h,w = g.shape; out = g.copy()
+            for r in range(h):
+                for c in range(w):
+                    if out[r,c] == 0:
+                        if g[r, w-1-c] != 0: out[r,c] = g[r, w-1-c]
+                        elif g[h-1-r, c] != 0: out[r,c] = g[h-1-r, c]
+                        elif g[h-1-r, w-1-c] != 0: out[r,c] = g[h-1-r, w-1-c]
+            return out
+        cands.append(mirror_hv)
         return cands
 
     # --------------------------------------------------------
@@ -630,7 +757,10 @@ class PureSymbolicSolverV3:
     # --------------------------------------------------------
     def _lines(self, train) -> list[Prog]:
         cands: list[Prog] = []
-        diff_cols = set().union(*[set(map(int, np.unique(out[inp != out]))) for inp, out in train if inp.shape == out.shape])
+        diff_cols = set()
+        for inp, out in train:
+            if inp.shape == out.shape:
+                diff_cols |= set(map(int, np.unique(out[inp != out])))
         cand_colors = [0] + sorted(diff_cols)
 
         for rc in cand_colors:
@@ -690,11 +820,33 @@ class PureSymbolicSolverV3:
                 return fn
             cands.append(mk_diag())
 
+        # Full cross rays (horizontal + vertical through each point)
+        for rc in cand_colors:
+            def mk_cross_ray(fill_col=rc):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                col = fill_col if fill_col != 0 else g[r, c]
+                                for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                                    cr, cc = r + dr, c + dc
+                                    while 0 <= cr < h and 0 <= cc < w:
+                                        if out[cr, cc] == 0: out[cr, cc] = col
+                                        else: break
+                                        cr += dr; cc += dc
+                    return out
+                return fn
+            cands.append(mk_cross_ray())
+
         return cands
 
     def _diamond_dilation(self, train) -> list[Prog]:
         cands: list[Prog] = []
-        diff_cols = set().union(*[set(map(int, np.unique(out[inp != out]))) for inp, out in train if inp.shape == out.shape])
+        diff_cols = set()
+        for inp, out in train:
+            if inp.shape == out.shape:
+                diff_cols |= set(map(int, np.unique(out[inp != out])))
         cand_colors = [0] + sorted(diff_cols)
         for radius in (1, 2, 3):
             for target_c in cand_colors:
@@ -853,42 +1005,69 @@ class PureSymbolicSolverV3:
                             if 0<=nr<h and 0<=nc<w and out[nr,nc]==0: out[nr,nc]=col
             return out
         cands.append(expand_cross)
+        
+        # Expand full 8-neighborhood
+        def expand_8(g):
+            h,w=g.shape; out=g.copy()
+            for r in range(h):
+                for c in range(w):
+                    if g[r,c]!=0:
+                        col=g[r,c]
+                        for dr in (-1,0,1):
+                            for dc in (-1,0,1):
+                                if dr==0 and dc==0: continue
+                                nr,nc=r+dr,c+dc
+                                if 0<=nr<h and 0<=nc<w and out[nr,nc]==0: out[nr,nc]=col
+            return out
+        cands.append(expand_8)
         return cands
 
     def _neighbor_count_recolor(self, train) -> list[Prog]:
         cands: list[Prog] = []
         inp0, out0 = train[0]
         if inp0.shape != out0.shape: return cands
-        def count_neighbors(g, r, c):
-            h, w = g.shape; cnt = 0
-            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
-                nr, nc = r+dr, c+dc
-                if 0 <= nr < h and 0 <= nc < w and g[nr, nc] != 0: cnt += 1
-            return cnt
-        mapping = {}; consistent = True
-        for inp, out in train:
-            if inp.shape != out.shape: consistent = False; break
-            h, w = inp.shape
-            for r in range(h):
-                for c in range(w):
-                    key = (int(inp[r, c]), count_neighbors(inp, r, c))
-                    oc = int(out[r, c])
-                    if key in mapping and mapping[key] != oc:
-                        consistent = False; break
-                    mapping[key] = oc
+        
+        # Try both 4-connectivity and 8-connectivity
+        for nbr_dirs in [
+            [(-1,0),(1,0),(0,-1),(0,1)],  # 4-conn
+            [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]  # 8-conn
+        ]:
+            def count_neighbors(g, r, c, dirs=nbr_dirs):
+                h, w = g.shape; cnt = 0
+                for dr, dc in dirs:
+                    nr, nc = r+dr, c+dc
+                    if 0 <= nr < h and 0 <= nc < w and g[nr, nc] != 0: cnt += 1
+                return cnt
+            mapping = {}; consistent = True
+            for inp, out in train:
+                if inp.shape != out.shape: consistent = False; break
+                h, w = inp.shape
+                for r in range(h):
+                    for c in range(w):
+                        key = (int(inp[r, c]), count_neighbors(inp, r, c))
+                        oc = int(out[r, c])
+                        if key in mapping and mapping[key] != oc:
+                            consistent = False; break
+                        mapping[key] = oc
+                    if not consistent: break
                 if not consistent: break
-            if not consistent: break
-        if consistent and mapping:
-            def mk(m=mapping.copy()):
-                def fn(g):
-                    h, w = g.shape; out = np.zeros_like(g)
-                    for r in range(h):
-                        for c in range(w):
-                            key = (int(g[r, c]), count_neighbors(g, r, c))
-                            out[r, c] = m.get(key, int(g[r, c]))
-                    return out
-                return fn
-            cands.append(mk())
+            if consistent and mapping:
+                def mk(m=mapping.copy(), dirs=nbr_dirs[:]):
+                    def cn(g, r, c):
+                        h, w = g.shape; cnt = 0
+                        for dr, dc in dirs:
+                            nr, nc = r+dr, c+dc
+                            if 0 <= nr < h and 0 <= nc < w and g[nr, nc] != 0: cnt += 1
+                        return cnt
+                    def fn(g):
+                        h, w = g.shape; out = np.zeros_like(g)
+                        for r in range(h):
+                            for c in range(w):
+                                key = (int(g[r, c]), cn(g, r, c))
+                                out[r, c] = m.get(key, int(g[r, c]))
+                        return out
+                    return fn
+                cands.append(mk())
         return cands
 
     def _border_recolor(self, train) -> list[Prog]:
@@ -923,6 +1102,16 @@ class PureSymbolicSolverV3:
                     if len(cols) >= 2: out[r, cols[0]:cols[-1]+1] = cl
             return out
         cands.append(fill_between_h)
+        
+        def fill_between_v(g):
+            h,w = g.shape; out = g.copy()
+            for c in range(w):
+                for cl in np.unique(g[:,c]):
+                    if cl == 0: continue
+                    rows = np.where(g[:,c] == cl)[0]
+                    if len(rows) >= 2: out[rows[0]:rows[-1]+1, c] = cl
+            return out
+        cands.append(fill_between_v)
         return cands
 
     # --------------------------------------------------------
@@ -959,21 +1148,9 @@ class PureSymbolicSolverV3:
     def _deduce_output_from_panels(self, train) -> list[Prog]:
         cands: list[Prog] = []
         for dc in range(10):
-            def _split(g, d):
-                h,w = g.shape
-                dr = [r for r in range(h) if np.all(g[r,:]==d)]
-                dcc = [c for c in range(w) if np.all(g[:,c]==d)]
-                rs = [-1]+dr+[h]; cs_list = [-1]+dcc+[w]
-                panels = []
-                for i in range(len(rs)-1):
-                    r1,r2 = rs[i]+1, rs[i+1]
-                    for j in range(len(cs_list)-1):
-                        c1,c2 = cs_list[j]+1, cs_list[j+1]
-                        if r2>r1 and c2>c1: panels.append(g[r1:r2, c1:c2])
-                return panels
             def mk_diff(d=dc):
                 def fn(g):
-                    ps = _split(g, d)
+                    ps = _split_panels(g, d)
                     if len(ps) != 2 or ps[0].shape != ps[1].shape: return None
                     diff = (ps[0] != ps[1])
                     out = np.zeros_like(ps[0]); out[diff] = ps[0][diff]; return out
@@ -997,6 +1174,16 @@ class PureSymbolicSolverV3:
             rows = sorted(range(g.shape[0]), key=lambda r: np.count_nonzero(g[r,:]))
             return g[rows, :]
         cands.append(sort_rows_by_nz)
+        
+        def sort_rows_by_nz_desc(g):
+            rows = sorted(range(g.shape[0]), key=lambda r: np.count_nonzero(g[r,:]), reverse=True)
+            return g[rows, :]
+        cands.append(sort_rows_by_nz_desc)
+        
+        def sort_cols_by_nz(g):
+            cols = sorted(range(g.shape[1]), key=lambda c: np.count_nonzero(g[:,c]))
+            return g[:, cols]
+        cands.append(sort_cols_by_nz)
         return cands
 
     def _majority_per_object(self, train) -> list[Prog]:
@@ -1052,6 +1239,1263 @@ class PureSymbolicSolverV3:
             cands.append(mk_cf())
         return cands
 
+    # ============================================================
+    # NEW v4 PRIMITIVES
+    # ============================================================
+
+    # --------------------------------------------------------
+    # 19. Per-Color Shape Stamp (solves 0ca9ddb6, 0962bcdd)
+    # --------------------------------------------------------
+    def _per_color_shape_stamp(self, train) -> list[Prog]:
+        """Each distinct color gets a unique pattern stamped around it."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        colors = sorted(set(map(int, np.unique(inp0))) - {0})
+        if len(colors) < 1 or len(colors) > 5: return cands
+        
+        # For each color, learn the stamp pattern from train[0]
+        stamps = {}
+        for col in colors:
+            pts = list(zip(*np.where(inp0 == col)))
+            if not pts: continue
+            # Try different radii
+            for rad in (1, 2, 3):
+                valid = True
+                patches = []
+                for r, c in pts:
+                    r1, r2 = r-rad, r+rad+1
+                    c1, c2 = c-rad, c+rad+1
+                    if r1 < 0 or r2 > inp0.shape[0] or c1 < 0 or c2 > inp0.shape[1]:
+                        valid = False; break
+                    patches.append(out0[r1:r2, c1:c2].copy())
+                if valid and patches:
+                    # Check all patches for this color are the same
+                    if all(np.array_equal(patches[0], p) for p in patches):
+                        stamps[col] = (rad, patches[0].copy())
+                        break
+        
+        if stamps:
+            # Verify across all training examples
+            ok = True
+            for inp, out in train[1:]:
+                for col, (rad, stamp) in stamps.items():
+                    pts = list(zip(*np.where(inp == col)))
+                    for r, c in pts:
+                        r1, r2 = r-rad, r+rad+1
+                        c1, c2 = c-rad, c+rad+1
+                        if r1 < 0 or r2 > inp.shape[0] or c1 < 0 or c2 > inp.shape[1]:
+                            ok = False; break
+                        if not np.array_equal(out[r1:r2, c1:c2], stamp):
+                            ok = False; break
+                    if not ok: break
+                if not ok: break
+            
+            if ok:
+                # Variant 1: preserve existing pixels (for tasks with extra non-stamped content)
+                def mk_preserve(st=dict(stamps)):
+                    def fn(g):
+                        h, w = g.shape
+                        out = g.copy()
+                        for col, (rad, stamp) in st.items():
+                            pts = list(zip(*np.where(g == col)))
+                            for r, c in pts:
+                                r1, r2 = r-rad, r+rad+1
+                                c1, c2 = c-rad, c+rad+1
+                                if 0 <= r1 and r2 <= h and 0 <= c1 and c2 <= w:
+                                    for dr in range(2*rad+1):
+                                        for dc in range(2*rad+1):
+                                            if stamp[dr, dc] != 0:
+                                                out[r1+dr, c1+dc] = stamp[dr, dc]
+                        return out
+                    return fn
+                cands.append(mk_preserve())
+                # Variant 2: start from zeros (for tasks where output is only stamps)
+                def mk_clean(st=dict(stamps)):
+                    def fn(g):
+                        h, w = g.shape
+                        out = np.zeros_like(g)
+                        for col, (rad, stamp) in st.items():
+                            pts = list(zip(*np.where(g == col)))
+                            for r, c in pts:
+                                r1, r2 = r-rad, r+rad+1
+                                c1, c2 = c-rad, c+rad+1
+                                if 0 <= r1 and r2 <= h and 0 <= c1 and c2 <= w:
+                                    for dr in range(2*rad+1):
+                                        for dc in range(2*rad+1):
+                                            if stamp[dr, dc] != 0:
+                                                out[r1+dr, c1+dc] = stamp[dr, dc]
+                        return out
+                    return fn
+                cands.append(mk_clean())
+        return cands
+
+    # --------------------------------------------------------
+    # 19b. Multi-Color Object Stamp (solves 0962bcdd)
+    # --------------------------------------------------------
+    def _multi_color_object_stamp(self, train) -> list[Prog]:
+        """Learn stamp pattern centered on multi-color objects."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        for conn in (4, 8):
+            objs = get_objects(inp0, conn=conn, mono=False)
+            if len(objs) < 1 or len(objs) > 10: continue
+            
+            # Check if all objects have the same shape
+            shapes = set()
+            for o in objs:
+                shapes.add((o['h'], o['w'], tuple(o['mask'].flatten())))
+            if len(shapes) != 1: continue
+            
+            # Learn stamp from output centered on each object
+            for rad in (2, 3, 4):
+                patches = []
+                valid = True
+                for o in objs:
+                    cr = (o['bbox'][0] + o['bbox'][2]) // 2
+                    cc = (o['bbox'][1] + o['bbox'][3]) // 2
+                    r1, r2 = cr-rad, cr+rad+1
+                    c1, c2 = cc-rad, cc+rad+1
+                    if r1 < 0 or r2 > inp0.shape[0] or c1 < 0 or c2 > inp0.shape[1]:
+                        valid = False; break
+                    patches.append(out0[r1:r2, c1:c2].copy())
+                
+                if valid and patches and all(np.array_equal(patches[0], p) for p in patches):
+                    stamp = patches[0].copy()
+                    # Verify on other training examples
+                    ok = True
+                    for inp, out in train[1:]:
+                        objs2 = get_objects(inp, conn=conn, mono=False)
+                        for o2 in objs2:
+                            cr = (o2['bbox'][0] + o2['bbox'][2]) // 2
+                            cc = (o2['bbox'][1] + o2['bbox'][3]) // 2
+                            r1, r2 = cr-rad, cr+rad+1
+                            c1, c2 = cc-rad, cc+rad+1
+                            if r1 < 0 or r2 > inp.shape[0] or c1 < 0 or c2 > inp.shape[1]:
+                                ok = False; break
+                            if not np.array_equal(out[r1:r2, c1:c2], stamp):
+                                ok = False; break
+                        if not ok: break
+                    
+                    if ok:
+                        def mk(cn=conn, rd=rad, st=stamp.copy()):
+                            def fn(g):
+                                h, w = g.shape
+                                out = g.copy()
+                                objs3 = get_objects(g, conn=cn, mono=False)
+                                for o3 in objs3:
+                                    cr = (o3['bbox'][0] + o3['bbox'][2]) // 2
+                                    cc = (o3['bbox'][1] + o3['bbox'][3]) // 2
+                                    r1, r2 = cr-rd, cr+rd+1
+                                    c1, c2 = cc-rd, cc+rd+1
+                                    if 0 <= r1 and r2 <= h and 0 <= c1 and c2 <= w:
+                                        out[r1:r2, c1:c2] = st
+                                return out
+                            return fn
+                        cands.append(mk())
+                        break  # found radius for this connectivity
+        return cands
+
+    # --------------------------------------------------------
+    # 20. Row×Column Intersection Pattern (solves 2281f1f4)
+    # --------------------------------------------------------
+    def _row_col_intersection(self, train) -> list[Prog]:
+        """Template row/col defines pattern, marker row/col defines where to replicate."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        h, w = inp0.shape
+        
+        colors = sorted(set(map(int, np.unique(inp0))) - {0})
+        diff = (inp0 != out0)
+        if not np.any(diff): return cands
+        fill_colors = set(map(int, np.unique(out0[diff]))) - {0}
+        
+        for anchor_c in colors:
+            for fill_c in fill_colors:
+                # Strategy 1: Template row + marker column
+                # Find the template row (has anchor_c in certain columns)
+                # Find the marker column (has anchor_c in certain rows)
+                for marker_col in range(w):
+                    marker_rows = [r for r in range(h) if inp0[r, marker_col] == anchor_c]
+                    if len(marker_rows) < 1: continue
+                    # Template = columns where anchor row has anchor_c (excluding marker_col)
+                    for template_row in range(h):
+                        template_cols = [c for c in range(w) if inp0[template_row, c] == anchor_c and c != marker_col]
+                        if len(template_cols) < 1: continue
+                        # Check: intersection of marker_rows × template_cols filled with fill_c?
+                        match = True
+                        for r in marker_rows:
+                            if r == template_row: continue
+                            for c in template_cols:
+                                if out0[r, c] != fill_c:
+                                    match = False; break
+                            if not match: break
+                        if match:
+                            def mk(ac=anchor_c, fc=fill_c, mc=marker_col, tr=template_row):
+                                def fn(g):
+                                    h, w = g.shape; out = g.copy()
+                                    m_rows = [r for r in range(h) if g[r, mc] == ac]
+                                    t_cols = [c for c in range(w) if g[tr, c] == ac and c != mc]
+                                    for r in m_rows:
+                                        if r == tr: continue
+                                        for c in t_cols:
+                                            if out[r, c] == 0:
+                                                out[r, c] = fc
+                                    return out
+                                return fn
+                            cands.append(mk())
+                
+                # Strategy 2: Simple row×col intersection (all positions)
+                anchor_rows = set()
+                anchor_cols = set()
+                for r in range(h):
+                    for c in range(w):
+                        if inp0[r, c] == anchor_c:
+                            anchor_rows.add(r)
+                            anchor_cols.add(c)
+                if anchor_rows and anchor_cols:
+                    def mk2(ac=anchor_c, fc=fill_c):
+                        def fn(g):
+                            h, w = g.shape; out = g.copy()
+                            a_rows = set()
+                            a_cols = set()
+                            for r in range(h):
+                                for c in range(w):
+                                    if g[r, c] == ac:
+                                        a_rows.add(r)
+                                        a_cols.add(c)
+                            for r in a_rows:
+                                for c in a_cols:
+                                    if g[r, c] == 0:
+                                        out[r, c] = fc
+                            return out
+                        return fn
+                    cands.append(mk2())
+        return cands
+
+    # --------------------------------------------------------
+    # 21. Directional Trail/Ray from Shape (solves 1f0c79e5)
+    # --------------------------------------------------------
+    def _directional_trail(self, train) -> list[Prog]:
+        """Object trails in a direction indicated by a marker color."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        colors = sorted(set(map(int, np.unique(inp0))) - {0})
+        if len(colors) != 2: return cands
+        
+        for main_c in colors:
+            dir_c = [c for c in colors if c != main_c][0]
+            main_pts = list(zip(*np.where(inp0 == main_c)))
+            dir_pts = list(zip(*np.where(inp0 == dir_c)))
+            if not main_pts or len(dir_pts) != 1: continue
+            
+            dr_pt = dir_pts[0]
+            # Direction from main object center to direction marker
+            mr = np.mean([r for r, c in main_pts])
+            mc = np.mean([c for r, c in main_pts])
+            
+            dr_dir = dr_pt[0] - mr
+            dc_dir = dr_pt[1] - mc
+            
+            # Normalize to unit direction
+            if abs(dr_dir) >= abs(dc_dir):
+                sdr = 1 if dr_dir > 0 else -1
+                sdc = 1 if dc_dir > 0 else (-1 if dc_dir < 0 else 0)
+            else:
+                sdc = 1 if dc_dir > 0 else -1
+                sdr = 1 if dr_dir > 0 else (-1 if dr_dir < 0 else 0)
+            
+            def mk(mc_=main_c, dc_=dir_c, sd=(sdr, sdc)):
+                def fn(g):
+                    h, w = g.shape
+                    mpts = list(zip(*np.where(g == mc_)))
+                    dpts = list(zip(*np.where(g == dc_)))
+                    if not mpts or len(dpts) != 1: return g
+                    
+                    mr = np.mean([r for r, c in mpts])
+                    mc = np.mean([c for r, c in mpts])
+                    dp = dpts[0]
+                    
+                    ddr = dp[0] - mr
+                    ddc = dp[1] - mc
+                    if abs(ddr) >= abs(ddc):
+                        s_dr = 1 if ddr > 0 else -1
+                        s_dc = 1 if ddc > 0 else (-1 if ddc < 0 else 0)
+                    else:
+                        s_dc = 1 if ddc > 0 else -1
+                        s_dr = 1 if ddr > 0 else (-1 if ddr < 0 else 0)
+                    
+                    out = np.zeros_like(g)
+                    # Draw the trail
+                    for r, c in mpts:
+                        out[r, c] = mc_
+                    
+                    step = 1
+                    while True:
+                        any_placed = False
+                        for r, c in mpts:
+                            nr, nc = r + step*s_dr, c + step*s_dc
+                            if 0 <= nr < h and 0 <= nc < w:
+                                out[nr, nc] = mc_
+                                any_placed = True
+                        if not any_placed: break
+                        step += 1
+                        if step > max(h, w): break
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 22. Object Crop + Horizontal/Vertical Tile (solves 28bf18c6)
+    # --------------------------------------------------------
+    def _crop_and_tile(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        oh, ow = out0.shape
+        
+        # Crop non-zero content first
+        rows, cols = np.where(inp0 != 0)
+        if len(rows) == 0: return cands
+        cropped = inp0[rows.min():rows.max()+1, cols.min():cols.max()+1]
+        ch, cw = cropped.shape
+        
+        # Check if output is tiled version of cropped
+        for ny in range(1, 5):
+            for nx in range(1, 5):
+                if ch * ny == oh and cw * nx == ow:
+                    tiled = np.tile(cropped, (ny, nx))
+                    if np.array_equal(tiled, out0):
+                        def mk(r_ny=ny, r_nx=nx):
+                            def fn(g):
+                                rs, cs = np.where(g != 0)
+                                if len(rs) == 0: return g
+                                sub = g[rs.min():rs.max()+1, cs.min():cs.max()+1]
+                                return np.tile(sub, (r_ny, r_nx))
+                            return fn
+                        cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 23. Grid Panel Dimension Count (solves 1190e5a7)
+    # --------------------------------------------------------
+    def _panel_dimension_count(self, train) -> list[Prog]:
+        """Output is a grid whose dimensions correspond to panel count."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        oh, ow = out0.shape
+        
+        for dc in range(10):
+            h, w = inp0.shape
+            dr = [r for r in range(h) if np.all(inp0[r,:]==dc)]
+            dcc = [c for c in range(w) if np.all(inp0[:,c]==dc)]
+            n_row_panels = len(dr) + 1
+            n_col_panels = len(dcc) + 1
+            
+            if n_row_panels >= 2 and n_col_panels >= 2:
+                # Check if output shape matches panel dimensions
+                if oh == n_row_panels and ow == n_col_panels:
+                    # Output is panel dimension grid filled with bg color
+                    bg = int(np.unique(inp0)[0]) if len(np.unique(inp0)) > 0 else 0
+                    fill_c = [c for c in np.unique(inp0) if c != dc]
+                    if fill_c:
+                        bg_fill = int(fill_c[0])
+                        def mk(d=dc, bg_f=bg_fill):
+                            def fn(g):
+                                h, w = g.shape
+                                dr2 = [r for r in range(h) if np.all(g[r,:]==d)]
+                                dcc2 = [c for c in range(w) if np.all(g[:,c]==d)]
+                                nr = len(dr2) + 1
+                                nc = len(dcc2) + 1
+                                return np.full((nr, nc), bg_f, dtype=np.int32)
+                            return fn
+                        cands.append(mk())
+                
+                # Check if output shape matches panel content dimensions
+                rs = [-1]+dr+[h]; cs_list = [-1]+dcc+[w]
+                panel_h = rs[1]+1 if len(rs) > 1 else h  
+                panel_w = cs_list[1]+1 if len(cs_list) > 1 else w
+                if oh == panel_h and ow == panel_w:
+                    # Output is first panel content
+                    pass
+        return cands
+
+    # --------------------------------------------------------
+    # 24. Row Extension with Color Substitution (solves 017c7c7b)
+    # --------------------------------------------------------
+    def _row_extension_with_color_sub(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        ih, iw = inp0.shape
+        oh, ow = out0.shape
+        
+        if iw != ow: return cands
+        if oh <= ih: return cands
+        
+        # Check if output is input rows tiled + extra rows with color sub
+        for extend_rows in range(1, oh - ih + 1):
+            if oh != ih + extend_rows: continue
+            # Check if last extend_rows of output match some rows of input with color sub
+            # Try: output = color_sub(concat(input, extra_rows_from_input))
+            
+            # Pattern: output = vertical tile of input + partial, with color mapping
+            colors_in = set(map(int, np.unique(inp0))) - {0}
+            colors_out = set(map(int, np.unique(out0))) - {0}
+            
+            # Check if output is input tiled with palette swap
+            for cy in range(1, 4):
+                if oh % ih != 0 and oh != ih + extend_rows: continue
+                
+                # Try repeating last few rows
+                if oh == ih + extend_rows:
+                    extra = out0[ih:, :]
+                    # Find which rows of out0[:ih] match extra
+                    for start in range(ih):
+                        if start + extend_rows <= ih:
+                            chunk = out0[start:start+extend_rows, :]
+                            if np.array_equal(chunk, extra):
+                                # Map colors
+                                mapping = {}
+                                ok = True
+                                for r in range(ih):
+                                    for c in range(iw):
+                                        ci = int(inp0[r, c])
+                                        co = int(out0[r, c])
+                                        if ci in mapping and mapping[ci] != co:
+                                            ok = False; break
+                                        mapping[ci] = co
+                                    if not ok: break
+                                if ok and mapping:
+                                    def mk(m=mapping.copy(), s=start, er=extend_rows):
+                                        def fn(g):
+                                            h, w = g.shape
+                                            # Apply color mapping
+                                            mapped = g.copy()
+                                            for k, v in m.items():
+                                                mapped[g == k] = v
+                                            # Extend with rows from start
+                                            extra = mapped[s:s+er, :]
+                                            return np.vstack([mapped, extra])
+                                        return fn
+                                    cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 25. Spiral Fill (solves 28e73c20)
+    # --------------------------------------------------------
+    def _spiral_fill(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        if np.count_nonzero(inp0) > 0: return cands  # Only for all-zero inputs
+        
+        fill_colors = list(set(map(int, np.unique(out0))) - {0})
+        if len(fill_colors) != 1: return cands
+        fc = fill_colors[0]
+        
+        def mk(fill_c=fc):
+            def fn(g):
+                h, w = g.shape
+                out = np.zeros_like(g)
+                # Trace spiral path from outside in
+                r1, r2, c1, c2 = 0, h-1, 0, w-1
+                ring = 0
+                while r1 <= r2 and c1 <= c2:
+                    col = fill_c if ring % 2 == 0 else 0
+                    # Top
+                    for c in range(c1, c2+1): out[r1, c] = col
+                    # Right
+                    for r in range(r1+1, r2+1): out[r, c2] = col
+                    # Bottom (if distinct)
+                    if r1 < r2:
+                        for c in range(c2-1, c1-1, -1): out[r2, c] = col
+                    # Left (if distinct)
+                    if c1 < c2:
+                        for r in range(r2-1, r1, -1): out[r, c1] = col
+                    r1 += 1; r2 -= 1; c1 += 1; c2 -= 1
+                    ring += 1
+                return out
+            return fn
+        cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 26. Cross-Line Drawing Through Markers (solves 1bfc4729)
+    # --------------------------------------------------------
+    def _cross_line_markers(self, train) -> list[Prog]:
+        """Each marker pixel draws horizontal + vertical lines through its row/col."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        colors = sorted(set(map(int, np.unique(inp0))) - {0})
+        if not colors: return cands
+        
+        # Check if each color draws full row + col lines
+        for line_mode in ("full_cross", "row_only", "col_only", "cross_rect"):
+            def mk(mode=line_mode):
+                def fn(g):
+                    h, w = g.shape; out = np.zeros_like(g)
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                col = int(g[r, c])
+                                if mode in ("full_cross", "row_only"):
+                                    out[r, :] = np.where(out[r, :] == 0, col, out[r, :])
+                                if mode in ("full_cross", "col_only"):
+                                    out[:, c] = np.where(out[:, c] == 0, col, out[:, c])
+                                if mode == "cross_rect":
+                                    out[r, :] = col
+                                    out[:, c] = col
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 27. Object Symmetry Completion (solves 1b60fb0c, 150deff5)
+    # --------------------------------------------------------
+    def _object_symmetry_fill(self, train) -> list[Prog]:
+        """Fill symmetric partner of asymmetric single-color object."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        diff = (inp0 != out0)
+        if not np.any(diff): return cands
+        
+        # Check if the object has a line of symmetry
+        for conn in (4, 8):
+            objs = get_objects(inp0, conn=conn)
+            if len(objs) != 1: continue
+            o = objs[0]
+            cells = set(o['cells'])
+            mr, mc, Mr, Mc = o['bbox']
+            
+            # Find axis of symmetry
+            cr = (mr + Mr) / 2.0
+            cc = (mc + Mc) / 2.0
+            
+            # Check horizontal symmetry axis
+            new_colors = set(map(int, np.unique(out0[diff])))
+            for new_c in new_colors:
+                for axis in ("h", "v"):
+                    def mk(cn=conn, nc=new_c, ax=axis):
+                        def fn(g):
+                            h, w = g.shape; out = g.copy()
+                            objs2 = get_objects(g, conn=cn)
+                            if len(objs2) != 1: return g
+                            o2 = objs2[0]
+                            cells2 = set(o2['cells'])
+                            mr2, mc2, Mr2, Mc2 = o2['bbox']
+                            
+                            if ax == "v":
+                                # Vertical axis of symmetry (left-right)
+                                ccenter = (mc2 + Mc2) / 2.0
+                                for r, c in list(cells2):
+                                    mirror_c = int(2 * ccenter - c + 0.5)
+                                    if 0 <= mirror_c < w and (r, mirror_c) not in cells2:
+                                        out[r, mirror_c] = nc
+                            else:
+                                # Horizontal axis of symmetry (top-bottom)
+                                rcenter = (mr2 + Mr2) / 2.0
+                                for r, c in list(cells2):
+                                    mirror_r = int(2 * rcenter - r + 0.5)
+                                    if 0 <= mirror_r < h and (mirror_r, c) not in cells2:
+                                        out[mirror_r, c] = nc
+                            return out
+                        return fn
+                    cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 28. Per-Pixel Position Rule
+    # --------------------------------------------------------
+    def _pixel_position_rule(self, train) -> list[Prog]:
+        """Learn (row_relative, col_relative, color) -> output_color mapping."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        h, w = inp0.shape
+        
+        # Try row%N, col%M rules
+        for rmod in range(1, min(h+1, 6)):
+            for cmod in range(1, min(w+1, 6)):
+                mapping = {}; ok = True
+                for inp, out in train:
+                    if inp.shape != out.shape: ok = False; break
+                    for r in range(inp.shape[0]):
+                        for c in range(inp.shape[1]):
+                            key = (r % rmod, c % cmod, int(inp[r,c]))
+                            val = int(out[r,c])
+                            if key in mapping and mapping[key] != val:
+                                ok = False; break
+                            mapping[key] = val
+                        if not ok: break
+                    if not ok: break
+                if ok and mapping:
+                    def mk(m=mapping.copy(), rm=rmod, cm=cmod):
+                        def fn(g):
+                            h, w = g.shape; out = np.zeros_like(g)
+                            for r in range(h):
+                                for c in range(w):
+                                    key = (r % rm, c % cm, int(g[r,c]))
+                                    out[r,c] = m.get(key, g[r,c])
+                            return out
+                        return fn
+                    cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 29. Most Common Object Shape Extraction
+    # --------------------------------------------------------
+    def _most_common_object(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        for conn in (4, 8):
+            def mk(c=conn):
+                def fn(g):
+                    objs = get_objects(g, conn=c)
+                    if not objs: return g
+                    # Find most common shape
+                    shapes = {}
+                    for o in objs:
+                        key = (o['h'], o['w'], tuple(o['mask'].flatten()))
+                        if key not in shapes:
+                            shapes[key] = []
+                        shapes[key].append(o)
+                    most_common = max(shapes.values(), key=len)
+                    if len(most_common) > 1:
+                        o = most_common[0]
+                        return o['mask']
+                    return g
+                return fn
+            cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 30. Row/Col Periodic Pattern Fill
+    # --------------------------------------------------------
+    def _periodic_fill(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        h, w = inp0.shape
+        
+        # Row-wise fill: each row's pattern is determined by its content
+        def row_fill(g):
+            h, w = g.shape; out = g.copy()
+            for r in range(h):
+                nz = [(c, int(g[r,c])) for c in range(w) if g[r,c] != 0]
+                if len(nz) >= 2:
+                    # Fill between non-zero with the same color
+                    for i in range(len(nz)-1):
+                        c1, col1 = nz[i]
+                        c2, col2 = nz[i+1]
+                        if col1 == col2:
+                            out[r, c1:c2+1] = col1
+            return out
+        cands.append(row_fill)
+        
+        # Col-wise fill
+        def col_fill(g):
+            h, w = g.shape; out = g.copy()
+            for c in range(w):
+                nz = [(r, int(g[r,c])) for r in range(h) if g[r,c] != 0]
+                if len(nz) >= 2:
+                    for i in range(len(nz)-1):
+                        r1, col1 = nz[i]
+                        r2, col2 = nz[i+1]
+                        if col1 == col2:
+                            out[r1:r2+1, c] = col1
+            return out
+        cands.append(col_fill)
+        return cands
+
+    # --------------------------------------------------------
+    # 31. Object Pair Reflection (solves 22233c11)
+    # --------------------------------------------------------
+    def _object_pair_reflection(self, train) -> list[Prog]:
+        """For each pair of same-color objects, place markers at reflected positions."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        diff = (inp0 != out0)
+        if not np.any(diff): return cands
+        new_colors = set(map(int, np.unique(out0[diff]))) - set(map(int, np.unique(inp0)))
+        if not new_colors: return cands
+        
+        for marker_c in new_colors:
+            for conn in (4, 8):
+                def mk(mc=marker_c, cn=conn):
+                    def fn(g):
+                        h, w = g.shape; out = g.copy()
+                        objs = get_objects(g, conn=cn)
+                        # Group objects by shape
+                        shape_groups = {}
+                        for o in objs:
+                            key = (o['h'], o['w'], tuple(o['mask'].flatten()))
+                            if key not in shape_groups:
+                                shape_groups[key] = []
+                            shape_groups[key].append(o)
+                        
+                        for key, group in shape_groups.items():
+                            if len(group) == 2:
+                                o1, o2 = group
+                                # Reflect each object through the other
+                                mr1 = (o1['bbox'][0] + o1['bbox'][2]) / 2
+                                mc1 = (o1['bbox'][1] + o1['bbox'][3]) / 2
+                                mr2 = (o2['bbox'][0] + o2['bbox'][2]) / 2
+                                mc2 = (o2['bbox'][1] + o2['bbox'][3]) / 2
+                                
+                                # Place reflected shape of o1 at mirror position through o2
+                                dr = mr2 - mr1
+                                dc = mc2 - mc1
+                                
+                                # Mirror of o1 through line between centers
+                                for r, c in o1['cells']:
+                                    nr = int(r + 2*dr + 0.5)
+                                    nc = int(c + 2*dc + 0.5)
+                                    if 0 <= nr < h and 0 <= nc < w and out[nr, nc] == 0:
+                                        out[nr, nc] = mc
+                                for r, c in o2['cells']:
+                                    nr = int(r - 2*dr + 0.5)
+                                    nc = int(c - 2*dc + 0.5)
+                                    if 0 <= nr < h and 0 <= nc < w and out[nr, nc] == 0:
+                                        out[nr, nc] = mc
+                        return out
+                    return fn
+                cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 32. Object Color Histogram / Counting Output  
+    # --------------------------------------------------------
+    def _color_counting_output(self, train) -> list[Prog]:
+        """Output is a small grid representing counts of colors or objects."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        oh, ow = out0.shape
+        
+        # 1x1 output: most/least frequent color
+        if oh == 1 and ow == 1:
+            target = int(out0[0, 0])
+            colors = sorted(set(map(int, np.unique(inp0))) - {0})
+            
+            # Most frequent non-zero color
+            cnt = Counter(inp0[inp0 != 0].flatten())
+            if cnt:
+                most = cnt.most_common(1)[0][0]
+                least = cnt.most_common()[-1][0]
+                if int(most) == target:
+                    def mk_most():
+                        def fn(g):
+                            cnt2 = Counter(g[g != 0].flatten())
+                            if not cnt2: return g
+                            return np.array([[cnt2.most_common(1)[0][0]]], dtype=np.int32)
+                        return fn
+                    cands.append(mk_most())
+                if int(least) == target:
+                    def mk_least():
+                        def fn(g):
+                            cnt2 = Counter(g[g != 0].flatten())
+                            if not cnt2: return g
+                            return np.array([[cnt2.most_common()[-1][0]]], dtype=np.int32)
+                        return fn
+                    cands.append(mk_least())
+            
+            # Count of distinct non-zero colors
+            n_colors = len(colors)
+            if n_colors == target:
+                def mk_cnt():
+                    def fn(g):
+                        n = len(set(map(int, np.unique(g))) - {0})
+                        return np.array([[n]], dtype=np.int32)
+                    return fn
+                cands.append(mk_cnt())
+        
+        # 1xN or Nx1 output: list of color counts
+        if oh == 1 or ow == 1:
+            n = max(oh, ow)
+            # Check if output represents sorted color counts
+            for conn in (4, 8):
+                objs = get_objects(inp0, conn=conn)
+                if len(objs) == n:
+                    pass  # TODO: could add more counting logic
+        return cands
+
+    # --------------------------------------------------------
+    # 33. Object-Relative Marker Patterns
+    # --------------------------------------------------------
+    def _object_relative_markers(self, train) -> list[Prog]:
+        """Learn marker placement relative to each object."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        diff = (inp0 != out0)
+        if not np.any(diff): return cands
+        
+        # For each object, compute relative positions of new pixels
+        for conn in (4, 8):
+            objs = get_objects(inp0, conn=conn)
+            if not objs: continue
+            
+            new_pixels = list(zip(*np.where(diff)))
+            if not new_pixels: continue
+            
+            # Check if new pixels are at consistent relative positions from each object
+            for o in objs:
+                cr = (o['bbox'][0] + o['bbox'][2]) / 2
+                cc = (o['bbox'][1] + o['bbox'][3]) / 2
+                
+                # Compute relative positions of new pixels near this object
+                near_new = []
+                for r, c in new_pixels:
+                    dist = abs(r - cr) + abs(c - cc)
+                    if dist < max(o['h'], o['w']) * 3:
+                        near_new.append((r - int(cr), c - int(cc), int(out0[r, c])))
+        return cands
+
+    # --------------------------------------------------------
+    # 34. Subgrid Majority Vote
+    # --------------------------------------------------------
+    def _subgrid_majority(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        ih, iw = inp0.shape
+        oh, ow = out0.shape
+        
+        if oh >= ih or ow >= iw: return cands
+        if ih % oh != 0 or iw % ow != 0: return cands
+        
+        sy, sx = ih // oh, iw // ow
+        
+        # Check majority vote
+        def mk(y=sy, x=sx):
+            def fn(g):
+                h, w = g.shape
+                if h % y != 0 or w % x != 0: return None
+                rh, rw = h // y, w // x
+                out = np.zeros((rh, rw), dtype=np.int32)
+                for r in range(rh):
+                    for c in range(rw):
+                        blk = g[r*y:(r+1)*y, c*x:(c+1)*x]
+                        vals, cnts = np.unique(blk, return_counts=True)
+                        out[r, c] = vals[np.argmax(cnts)]
+                return out
+            return fn
+        cands.append(mk())
+        
+        # Minority vote (non-bg value)
+        def mk_min(y=sy, x=sx):
+            def fn(g):
+                h, w = g.shape
+                if h % y != 0 or w % x != 0: return None
+                rh, rw = h // y, w // x
+                out = np.zeros((rh, rw), dtype=np.int32)
+                for r in range(rh):
+                    for c in range(rw):
+                        blk = g[r*y:(r+1)*y, c*x:(c+1)*x]
+                        nz = blk[blk != 0]
+                        if len(nz) > 0:
+                            vals, cnts = np.unique(nz, return_counts=True)
+                            out[r, c] = vals[np.argmin(cnts)]
+                return out
+            return fn
+        cands.append(mk_min())
+        return cands
+
+    # --------------------------------------------------------
+    # 35. Diagonal Mirror Complete
+    # --------------------------------------------------------
+    def _diagonal_mirror(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        # Fill zeros with diagonal mirror
+        def diag_mirror(g):
+            h, w = g.shape
+            if h != w: return g
+            out = g.copy()
+            for r in range(h):
+                for c in range(w):
+                    if out[r, c] == 0 and g[c, r] != 0:
+                        out[r, c] = g[c, r]
+            return out
+        cands.append(diag_mirror)
+        
+        def anti_diag_mirror(g):
+            h, w = g.shape
+            if h != w: return g
+            out = g.copy()
+            for r in range(h):
+                for c in range(w):
+                    mr, mc = h-1-c, w-1-r
+                    if out[r, c] == 0 and g[mr, mc] != 0:
+                        out[r, c] = g[mr, mc]
+            return out
+        cands.append(anti_diag_mirror)
+        return cands
+
+    # --------------------------------------------------------
+    # 36. Row/Col Pattern Match Recolor
+    # --------------------------------------------------------
+    def _pattern_match_recolor(self, train) -> list[Prog]:
+        """Recolor based on matching row or column patterns."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        # Row-based: rows with same pattern get same color
+        def row_pattern_recolor(g):
+            h, w = g.shape; out = g.copy()
+            patterns = {}
+            for r in range(h):
+                pattern = tuple(int(g[r, c]) for c in range(w))
+                if pattern not in patterns:
+                    patterns[pattern] = []
+                patterns[pattern].append(r)
+            return out
+        return cands
+
+    # --------------------------------------------------------
+    # 37. Extended Neighborhood Cellular Rules
+    # --------------------------------------------------------
+    def _extended_neighborhood_rule(self, train) -> list[Prog]:
+        """Learn rules based on extended neighborhood (color, count of each color neighbor)."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        # For each pixel, compute a feature vector: (self_color, n_same_nbrs_4, n_diff_nbrs_4)
+        def compute_features(g, r, c):
+            h, w = g.shape
+            self_c = int(g[r, c])
+            same = 0; diff = 0
+            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                nr, nc = r+dr, c+dc
+                if 0 <= nr < h and 0 <= nc < w:
+                    if g[nr, nc] == self_c: same += 1
+                    elif g[nr, nc] != 0: diff += 1
+            return (self_c, same, diff)
+        
+        mapping = {}; ok = True
+        for inp, out in train:
+            if inp.shape != out.shape: ok = False; break
+            h, w = inp.shape
+            for r in range(h):
+                for c in range(w):
+                    key = compute_features(inp, r, c)
+                    val = int(out[r, c])
+                    if key in mapping and mapping[key] != val:
+                        ok = False; break
+                    mapping[key] = val
+                if not ok: break
+            if not ok: break
+        
+        if ok and mapping:
+            def mk(m=mapping.copy()):
+                def fn(g):
+                    h, w = g.shape; out = np.zeros_like(g)
+                    for r in range(h):
+                        for c in range(w):
+                            self_c = int(g[r, c])
+                            same = 0; diff = 0
+                            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                                nr, nc = r+dr, c+dc
+                                if 0 <= nr < h and 0 <= nc < w:
+                                    if g[nr, nc] == self_c: same += 1
+                                    elif g[nr, nc] != 0: diff += 1
+                            key = (self_c, same, diff)
+                            out[r, c] = m.get(key, self_c)
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 38. Flood Fill Per Object Color
+    # --------------------------------------------------------
+    def _flood_fill_per_object(self, train) -> list[Prog]:
+        """Fill enclosed regions within each object's bounding box."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        for conn in (4, 8):
+            def mk(cn=conn):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    objs = get_objects(g, conn=cn)
+                    for o in objs:
+                        mr, mc, Mr, Mc = o['bbox']
+                        # Flood fill zeros inside bbox that can't reach bbox border
+                        bh, bw = Mr-mr+1, Mc-mc+1
+                        sub = g[mr:Mr+1, mc:Mc+1]
+                        vis = np.zeros((bh, bw), dtype=bool)
+                        stk = []
+                        for r in range(bh):
+                            for c in (0, bw-1):
+                                if sub[r, c] == 0 and not vis[r, c]:
+                                    vis[r, c] = True; stk.append((r, c))
+                        for c in range(bw):
+                            for r in (0, bh-1):
+                                if sub[r, c] == 0 and not vis[r, c]:
+                                    vis[r, c] = True; stk.append((r, c))
+                        while stk:
+                            r, c = stk.pop()
+                            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                                nr, nc = r+dr, c+dc
+                                if 0<=nr<bh and 0<=nc<bw and sub[nr, nc]==0 and not vis[nr, nc]:
+                                    vis[nr, nc] = True; stk.append((nr, nc))
+                        for r in range(bh):
+                            for c in range(bw):
+                                if sub[r, c] == 0 and not vis[r, c]:
+                                    out[mr+r, mc+c] = o['color']
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 39. Object Sort and Stack  
+    # --------------------------------------------------------
+    def _object_sort_stack(self, train) -> list[Prog]:
+        """Extract objects, sort by property, stack vertically/horizontally."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        
+        for conn in (4, 8):
+            objs = get_objects(inp0, conn=conn)
+            if len(objs) < 2: continue
+            
+            # Stack masks sorted by area
+            for sort_key in ("area", "color"):
+                for direction in ("v", "h"):
+                    def mk(cn=conn, sk=sort_key, d=direction):
+                        def fn(g):
+                            objs2 = get_objects(g, conn=cn)
+                            if not objs2: return g
+                            if sk == "area":
+                                objs2.sort(key=lambda o: o['area'])
+                            elif sk == "color":
+                                objs2.sort(key=lambda o: o['color'])
+                            
+                            masks = [o['mask'] for o in objs2]
+                            # Pad to same width/height
+                            if d == "v":
+                                max_w = max(m.shape[1] for m in masks)
+                                padded = []
+                                for m in masks:
+                                    if m.shape[1] < max_w:
+                                        p = np.zeros((m.shape[0], max_w), dtype=np.int32)
+                                        p[:, :m.shape[1]] = m
+                                        padded.append(p)
+                                    else:
+                                        padded.append(m)
+                                return np.vstack(padded)
+                            else:
+                                max_h = max(m.shape[0] for m in masks)
+                                padded = []
+                                for m in masks:
+                                    if m.shape[0] < max_h:
+                                        p = np.zeros((max_h, m.shape[1]), dtype=np.int32)
+                                        p[:m.shape[0], :] = m
+                                        padded.append(p)
+                                    else:
+                                        padded.append(m)
+                                return np.hstack(padded)
+                        return fn
+                    cands.append(mk())
+        return cands
+
+    # --------------------------------------------------------
+    # 40. Border Detection and Outline
+    # --------------------------------------------------------
+    def _outline_objects(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        diff = (inp0 != out0)
+        if not np.any(diff): return cands
+        new_colors = set(map(int, np.unique(out0[diff])))
+        
+        for nc in new_colors:
+            # Interior fill: fill object interior, outline stays
+            def mk_interior(new_c=nc):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    for r in range(h):
+                        for c in range(w):
+                            if g[r, c] != 0:
+                                interior = True
+                                for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                                    nr, ncr = r+dr, c+dc
+                                    if 0 <= nr < h and 0 <= ncr < w:
+                                        if g[nr, ncr] == 0:
+                                            interior = False; break
+                                    else:
+                                        interior = False; break
+                                if interior:
+                                    out[r, c] = new_c
+                    return out
+                return fn
+            cands.append(mk_interior())
+        return cands
+
+    # --------------------------------------------------------
+    # 41. Color Zone Propagation
+    # --------------------------------------------------------
+    def _color_zone_propagation(self, train) -> list[Prog]:
+        """Propagate color zones (nearest non-zero pixel wins)."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        def nearest_color(g):
+            h, w = g.shape; out = g.copy()
+            # BFS from all non-zero pixels
+            from collections import deque
+            q = deque()
+            for r in range(h):
+                for c in range(w):
+                    if g[r, c] != 0:
+                        q.append((r, c, int(g[r, c])))
+            
+            while q:
+                r, c, col = q.popleft()
+                for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                    nr, nc = r+dr, c+dc
+                    if 0 <= nr < h and 0 <= nc < w and out[nr, nc] == 0:
+                        out[nr, nc] = col
+                        q.append((nr, nc, col))
+            return out
+        cands.append(nearest_color)
+        return cands
+
+    # --------------------------------------------------------
+    # 42. Row/Col Removal/Dedup
+    # --------------------------------------------------------
+    def _row_col_dedup(self, train) -> list[Prog]:
+        cands: list[Prog] = []
+        
+        # Remove duplicate rows
+        def dedup_rows(g):
+            seen = []
+            result = []
+            for r in range(g.shape[0]):
+                row = tuple(g[r, :])
+                if row not in seen:
+                    seen.append(row)
+                    result.append(g[r, :])
+            if result:
+                return np.array(result, dtype=np.int32)
+            return g
+        cands.append(dedup_rows)
+        
+        # Remove duplicate cols
+        def dedup_cols(g):
+            seen = []
+            result = []
+            for c in range(g.shape[1]):
+                col = tuple(g[:, c])
+                if col not in seen:
+                    seen.append(col)
+                    result.append(g[:, c])
+            if result:
+                return np.array(result, dtype=np.int32).T
+            return g
+        cands.append(dedup_cols)
+        
+        # Remove all-zero rows
+        def remove_zero_rows(g):
+            mask = np.any(g != 0, axis=1)
+            if np.any(mask):
+                return g[mask]
+            return g
+        cands.append(remove_zero_rows)
+        
+        # Remove all-zero cols
+        def remove_zero_cols(g):
+            mask = np.any(g != 0, axis=0)
+            if np.any(mask):
+                return g[:, mask]
+            return g
+        cands.append(remove_zero_cols)
+        
+        # Remove specific color rows
+        for rc in range(10):
+            def mk_remove(color=rc):
+                def fn(g):
+                    mask = ~np.all(g == color, axis=1)
+                    if np.any(mask):
+                        return g[mask]
+                    return g
+                return fn
+            cands.append(mk_remove())
+        return cands
+
+    # --------------------------------------------------------
+    # 43. Pixel-Level Conditional Transform
+    # --------------------------------------------------------
+    def _conditional_pixel_transform(self, train) -> list[Prog]:
+        """Learn: if pixel has color X and is in context Y, change to Z."""
+        cands: list[Prog] = []
+        inp0, out0 = train[0]
+        if inp0.shape != out0.shape: return cands
+        
+        # Context: (self_color, is_on_border_of_grid, is_adjacent_to_different_color)
+        def compute_ctx(g, r, c):
+            h, w = g.shape
+            self_c = int(g[r, c])
+            on_border = (r == 0 or r == h-1 or c == 0 or c == w-1)
+            adj_diff = False
+            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                nr, nc = r+dr, c+dc
+                if 0 <= nr < h and 0 <= nc < w and g[nr, nc] != self_c:
+                    adj_diff = True; break
+            return (self_c, on_border, adj_diff)
+        
+        mapping = {}; ok = True
+        for inp, out in train:
+            if inp.shape != out.shape: ok = False; break
+            h, w = inp.shape
+            for r in range(h):
+                for c in range(w):
+                    key = compute_ctx(inp, r, c)
+                    val = int(out[r, c])
+                    if key in mapping and mapping[key] != val:
+                        ok = False; break
+                    mapping[key] = val
+                if not ok: break
+            if not ok: break
+        
+        if ok and mapping:
+            def mk(m=mapping.copy()):
+                def fn(g):
+                    h, w = g.shape; out = np.zeros_like(g)
+                    for r in range(h):
+                        for c in range(w):
+                            self_c = int(g[r, c])
+                            on_border = (r == 0 or r == h-1 or c == 0 or c == w-1)
+                            adj_diff = False
+                            for dr, dc in ((-1,0),(1,0),(0,-1),(0,1)):
+                                nr, nc = r+dr, c+dc
+                                if 0 <= nr < h and 0 <= nc < w and g[nr, nc] != self_c:
+                                    adj_diff = True; break
+                            key = (self_c, on_border, adj_diff)
+                            out[r, c] = m.get(key, self_c)
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
 
 # ============================================================
 # BENCHMARK EVALUATOR
@@ -1066,11 +2510,11 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     if limit > 0: tasks = tasks[:limit]
 
     print("="*80, flush=True)
-    print("MATHX PURE SYMBOLIC ENGINE v3 (STRICT NON-LLM / 50+ PRIMITIVES)", flush=True)
+    print("MATHX PURE SYMBOLIC ENGINE v4 (STRICT NON-LLM / 80+ PRIMITIVES)", flush=True)
     print("="*80, flush=True)
     print(f"Split: {split.upper()}, Tasks: {len(tasks)}\n", flush=True)
 
-    solver = PureSymbolicSolverV3()
+    solver = PureSymbolicSolverV4()
     solved1 = solved2 = fit = 0
     t0 = time.perf_counter()
 
@@ -1113,7 +2557,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     print(f"{'='*80}", flush=True)
 
     Path("mathx_symbolic_benchmark_report.json").write_text(json.dumps({
-        "engine":"Pure Symbolic Engine v3 (Strict Non-LLM)",
+        "engine":"Pure Symbolic Engine v4 (Strict Non-LLM)",
         "split":split,"tasks":len(tasks),
         "fit":fit,"top1":solved1,"top2":solved2,
         "total_time_seconds":total,
