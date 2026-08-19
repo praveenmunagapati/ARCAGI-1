@@ -1,11 +1,13 @@
 {
   "device": "NVIDIA GeForce MX330 (DiscreteGPU) via Vulkan",
   "split": "all",
-  "gpu_dispatches": 10484,
+  "gpu_dispatches": 5669,
   "tasks": 800,
-  "training_fit": 80,
-  "exact_top1_solved": 71,
-  "exact_top2_solved": 72,
-  "total_time_seconds": 172.17987040001026,
-  "avg_ms_per_task": 215.22483800001282
+  "training_fit": 111,
+  "exact_top1_solved": 92,
+  "exact_top2_solved": 96,
+  "test_examples_correct": 99,
+  "test_examples_total": 835,
+  "total_time_seconds": 182.5115133000072,
+  "avg_ms_per_task": 228.139391625009
 }
