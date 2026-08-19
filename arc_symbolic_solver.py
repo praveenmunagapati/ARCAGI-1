@@ -1335,7 +1335,7 @@ class PureSymbolicSolverV4:
     # 19b. Multi-Color Object Stamp (solves 0962bcdd)
     # --------------------------------------------------------
     def _multi_color_object_stamp(self, train) -> list[Prog]:
-        """Learn stamp pattern centered on multi-color objects."""
+        """Learn parametric stamp pattern centered on multi-color objects."""
         cands: list[Prog] = []
         inp0, out0 = train[0]
         if inp0.shape != out0.shape: return cands
@@ -1344,59 +1344,120 @@ class PureSymbolicSolverV4:
             objs = get_objects(inp0, conn=conn, mono=False)
             if len(objs) < 1 or len(objs) > 10: continue
             
-            # Check if all objects have the same shape
-            shapes = set()
+            # Check if all objects have the same structural shape
+            norm_shapes = set()
             for o in objs:
-                shapes.add((o['h'], o['w'], tuple(o['mask'].flatten())))
-            if len(shapes) != 1: continue
+                # Normalize mask: map colors to role indices (0=bg, 1=first, 2=second...)
+                mask = o['mask']
+                color_order = []
+                norm = np.zeros_like(mask)
+                for r in range(mask.shape[0]):
+                    for c in range(mask.shape[1]):
+                        v = int(mask[r, c])
+                        if v == 0: continue
+                        if v not in color_order:
+                            color_order.append(v)
+                        norm[r, c] = color_order.index(v) + 1
+                norm_shapes.add(tuple(norm.flatten()))
+            if len(norm_shapes) != 1: continue
             
-            # Learn stamp from output centered on each object
+            # Get color roles for first object
+            o0 = objs[0]
+            mask0 = o0['mask']
+            color_roles = []
+            for r in range(mask0.shape[0]):
+                for c in range(mask0.shape[1]):
+                    v = int(mask0[r, c])
+                    if v != 0 and v not in color_roles:
+                        color_roles.append(v)
+            if len(color_roles) < 1: continue
+            
+            # Learn stamp template from output centered on first object
             for rad in (2, 3, 4):
-                patches = []
-                valid = True
-                for o in objs:
-                    cr = (o['bbox'][0] + o['bbox'][2]) // 2
-                    cc = (o['bbox'][1] + o['bbox'][3]) // 2
-                    r1, r2 = cr-rad, cr+rad+1
-                    c1, c2 = cc-rad, cc+rad+1
-                    if r1 < 0 or r2 > inp0.shape[0] or c1 < 0 or c2 > inp0.shape[1]:
-                        valid = False; break
-                    patches.append(out0[r1:r2, c1:c2].copy())
+                cr = (o0['bbox'][0] + o0['bbox'][2]) // 2
+                cc = (o0['bbox'][1] + o0['bbox'][3]) // 2
+                r1, r2 = cr-rad, cr+rad+1
+                c1, c2 = cc-rad, cc+rad+1
+                if r1 < 0 or r2 > inp0.shape[0] or c1 < 0 or c2 > inp0.shape[1]:
+                    continue
+                patch = out0[r1:r2, c1:c2].copy()
                 
-                if valid and patches and all(np.array_equal(patches[0], p) for p in patches):
-                    stamp = patches[0].copy()
-                    # Verify on other training examples
-                    ok = True
-                    for inp, out in train[1:]:
-                        objs2 = get_objects(inp, conn=conn, mono=False)
-                        for o2 in objs2:
-                            cr = (o2['bbox'][0] + o2['bbox'][2]) // 2
-                            cc = (o2['bbox'][1] + o2['bbox'][3]) // 2
-                            r1, r2 = cr-rad, cr+rad+1
-                            c1, c2 = cc-rad, cc+rad+1
-                            if r1 < 0 or r2 > inp.shape[0] or c1 < 0 or c2 > inp.shape[1]:
-                                ok = False; break
-                            if not np.array_equal(out[r1:r2, c1:c2], stamp):
-                                ok = False; break
-                        if not ok: break
-                    
-                    if ok:
-                        def mk(cn=conn, rd=rad, st=stamp.copy()):
-                            def fn(g):
-                                h, w = g.shape
-                                out = g.copy()
-                                objs3 = get_objects(g, conn=cn, mono=False)
-                                for o3 in objs3:
-                                    cr = (o3['bbox'][0] + o3['bbox'][2]) // 2
-                                    cc = (o3['bbox'][1] + o3['bbox'][3]) // 2
-                                    r1, r2 = cr-rd, cr+rd+1
-                                    c1, c2 = cc-rd, cc+rd+1
-                                    if 0 <= r1 and r2 <= h and 0 <= c1 and c2 <= w:
-                                        out[r1:r2, c1:c2] = st
-                                return out
-                            return fn
-                        cands.append(mk())
-                        break  # found radius for this connectivity
+                # Convert to role-based template
+                template = np.zeros_like(patch)
+                for r in range(patch.shape[0]):
+                    for c in range(patch.shape[1]):
+                        v = int(patch[r, c])
+                        if v == 0: continue
+                        if v in color_roles:
+                            template[r, c] = color_roles.index(v) + 1
+                        else:
+                            template[r, c] = -1  # unknown color, fail
+                
+                if np.any(template == -1): continue
+                
+                # Verify this template works across ALL objects in ALL training examples
+                ok = True
+                for inp, out in train:
+                    objs2 = get_objects(inp, conn=conn, mono=False)
+                    for o2 in objs2:
+                        # Get this object's color roles
+                        m2 = o2['mask']
+                        roles2 = []
+                        for rr in range(m2.shape[0]):
+                            for cc2 in range(m2.shape[1]):
+                                v = int(m2[rr, cc2])
+                                if v != 0 and v not in roles2:
+                                    roles2.append(v)
+                        if len(roles2) != len(color_roles):
+                            ok = False; break
+                        
+                        cr2 = (o2['bbox'][0] + o2['bbox'][2]) // 2
+                        cc2 = (o2['bbox'][1] + o2['bbox'][3]) // 2
+                        rr1, rr2 = cr2-rad, cr2+rad+1
+                        cc1, cc2b = cc2-rad, cc2+rad+1
+                        if rr1 < 0 or rr2 > inp.shape[0] or cc1 < 0 or cc2b > inp.shape[1]:
+                            ok = False; break
+                        
+                        actual = out[rr1:rr2, cc1:cc2b]
+                        # Reconstruct expected from template + this object's roles
+                        expected = np.zeros_like(template)
+                        for tr in range(template.shape[0]):
+                            for tc in range(template.shape[1]):
+                                if template[tr, tc] > 0:
+                                    expected[tr, tc] = roles2[int(template[tr, tc]) - 1]
+                        if not np.array_equal(actual, expected):
+                            ok = False; break
+                    if not ok: break
+                
+                if ok:
+                    def mk(cn=conn, rd=rad, tmpl=template.copy(), n_roles=len(color_roles)):
+                        def fn(g):
+                            h, w = g.shape
+                            out = g.copy()
+                            objs3 = get_objects(g, conn=cn, mono=False)
+                            for o3 in objs3:
+                                m3 = o3['mask']
+                                roles3 = []
+                                for rr in range(m3.shape[0]):
+                                    for cc3 in range(m3.shape[1]):
+                                        v = int(m3[rr, cc3])
+                                        if v != 0 and v not in roles3:
+                                            roles3.append(v)
+                                if len(roles3) != n_roles: continue
+                                
+                                cr3 = (o3['bbox'][0] + o3['bbox'][2]) // 2
+                                cc3 = (o3['bbox'][1] + o3['bbox'][3]) // 2
+                                rr1, rr2 = cr3-rd, cr3+rd+1
+                                cc1, cc2 = cc3-rd, cc3+rd+1
+                                if 0 <= rr1 and rr2 <= h and 0 <= cc1 and cc2 <= w:
+                                    for tr in range(tmpl.shape[0]):
+                                        for tc in range(tmpl.shape[1]):
+                                            if tmpl[tr, tc] > 0:
+                                                out[rr1+tr, cc1+tc] = roles3[int(tmpl[tr, tc]) - 1]
+                            return out
+                        return fn
+                    cands.append(mk())
+                    break
         return cands
 
     # --------------------------------------------------------
