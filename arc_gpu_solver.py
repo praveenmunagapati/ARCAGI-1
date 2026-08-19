@@ -306,46 +306,51 @@ class GPUSolverEngine:
     # ============================================================
 
     def _phase1_shape_preserving(self, train) -> Optional[Prog]:
+        # Strategy ordering: deterministic/structural first, then high-parameter
+        # strategies last (they overfit on small training sets)
         strategies = [
+            # --- Tier 1: Low-parameter, structural transforms (no overfitting risk) ---
             self._rigid_gpu,
             self._palette_gpu,
-            self._conditional_pixel_transform,
-            self._neighbor_count_recolor,
-            self._extended_neighborhood_rule,
-            self._pixel_position_rule,
             self._diagonal_periodic,
-            self._border_recolor,
-            self._interior_recolor,
+            self._color_inversion,
+            self._symmetry,
             self._mirror_complete,
             self._diagonal_mirror,
-            self._symmetry,
-            self._color_inversion,
             self._holes,
             self._flood_fill_per_object,
             self._gravity,
             self._gravity_with_obstacles,
             self._rigid_gravity_collision,
             self._connect_dots,
+            self._fill_between_same_color,
+            self._replace_bg_around_objects,
+            self._cellular_expand,
+            self._color_zone_propagation,
+            self._bbox_fill,
+            self._alternating_stripe,
+            self._spiral_fill,
+            self._directional_trail,
+            self._mask_overlay,
+            # --- Tier 2: Medium-parameter (some overfit risk, but useful) ---
+            self._border_recolor,
+            self._interior_recolor,
             self._cross_line_markers,
             self._diagonal_rays,
             self._cross_ray_stop,
             self._wireframe_bbox,
             self._diamond_dilation,
-            self._cellular_expand,
-            self._fill_between_same_color,
-            self._color_zone_propagation,
-            self._obj_rank_recolor,
-            self._bbox_fill,
             self._stamp_pattern_at_markers,
             self._per_color_shape_stamp,
-            self._mask_overlay,
+            self._obj_rank_recolor,
             self._object_symmetry_fill,
             self._row_col_intersection,
-            self._alternating_stripe,
-            self._spiral_fill,
             self._majority_per_object,
-            self._replace_bg_around_objects,
-            self._directional_trail,
+            # --- Tier 3: High-parameter strategies (overfit-prone, need >=3 training) ---
+            self._conditional_pixel_transform,
+            self._neighbor_count_recolor,
+            self._extended_neighborhood_rule,
+            self._pixel_position_rule,
         ]
         for strat in strategies:
             try:
@@ -462,6 +467,9 @@ class GPUSolverEngine:
             if not consistent:
                 break
         if consistent and mapping:
+            # Reject identity mapping (doesn't actually transform anything)
+            if all(k == v for k, v in mapping.items()):
+                return None
             lut = np.arange(10, dtype=np.int32)
             for k, v in mapping.items():
                 if 0 <= k < 10:
@@ -474,6 +482,8 @@ class GPUSolverEngine:
 
     # --- 3. Conditional Pixel Transform ---
     def _conditional_pixel_transform(self, train):
+        # Requires >=3 training examples to avoid overfitting
+        if len(train) < 3: return None
         inp0, out0 = train[0]
         if inp0.shape != out0.shape: return None
 
@@ -529,6 +539,8 @@ class GPUSolverEngine:
 
     # --- 4. Neighbor Count Recolor ---
     def _neighbor_count_recolor(self, train):
+        # Requires >=3 training examples to avoid overfitting
+        if len(train) < 3: return None
         for nbr_dirs in [
             [(-1,0),(1,0),(0,-1),(0,1)],
             [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
@@ -574,6 +586,8 @@ class GPUSolverEngine:
 
     # --- 5. Extended Neighborhood Cellular Rule ---
     def _extended_neighborhood_rule(self, train):
+        # Requires >=3 training examples to avoid overfitting
+        if len(train) < 3: return None
         inp0, out0 = train[0]
         if inp0.shape != out0.shape: return None
 
@@ -625,6 +639,8 @@ class GPUSolverEngine:
 
     # --- 6. Per-Pixel Position Rule ---
     def _pixel_position_rule(self, train):
+        # Requires >=3 training examples to avoid overfitting
+        if len(train) < 3: return None
         inp0, out0 = train[0]
         if inp0.shape != out0.shape: return None
         h, w = inp0.shape
