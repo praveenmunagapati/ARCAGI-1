@@ -1,10 +1,22 @@
 {
-  "engine": "Pure Symbolic Engine v3 (Strict Non-LLM)",
-  "split": "all",
-  "tasks": 800,
-  "fit": 70,
-  "top1": 62,
-  "top2": 63,
-  "total_time_seconds": 91.66035510000074,
-  "avg_ms_per_task": 114.57544387500093
+  "engine": "Pure Symbolic Engine v5 (Strict Non-LLM)",
+  "split": "training",
+  "tasks": 30,
+  "fit": 10,
+  "top1": 10,
+  "top2": 10,
+  "total_time_seconds": 36.76486130000558,
+  "avg_ms_per_task": 1225.4953766668525,
+  "solved_tasks": [
+    "007bbfb7",
+    "00d62c1b",
+    "05269061",
+    "05f2a901",
+    "08ed6ac7",
+    "0962bcdd",
+    "0b148d64",
+    "0ca9ddb6",
+    "0d3d703e",
+    "1c786137"
+  ]
 }
