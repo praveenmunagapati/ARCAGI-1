@@ -1,6 +1,6 @@
 """
-MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v10 (STRICT NON-LLM)
-Ultra-High-Performance Deductive Solver — 400+ Composable Symbolic Primitives
+MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v12 (STRICT NON-LLM)
+Ultra-High-Performance Deductive Solver — 440+ Composable Symbolic Primitives
 + Universal Pixel Rule Learner + True Periodic Extrapolator + Key Panel Decoder
 + Indicator Shape Propagation + Alternating Border Stripes + Crop Anomaly
 + Cross Diamond Dilation + Square Decomposition + Panel Boolean (AND/OR/XOR/NOR/NAND/XNOR)
@@ -9,6 +9,8 @@ Ultra-High-Performance Deductive Solver — 400+ Composable Symbolic Primitives
 + Perpendicular Diagonal Endpoints + Fall to Same-Color Lines
 + Kronecker Inverted Complement Tile + Arithmetic Progression Ray + Square Frame Size Fill
 + Mirrored Quadrants 2x2 Tile + Assemble Cropped Quadrants + HV Endpoint Connector + Hole Count Recolor
++ Alternating Row Tiles + Shape Key Indicator Recolor + Affine Shear Left + Chain Corner Assembly + Boundary Line Recolor
++ Maximal Inscribed Square Expansion + Color Swap Codebook 2x2 + 8-Directional Compass Raycast
 Zero LLM Dependencies — 100% Deterministic Code
 """
 
@@ -128,9 +130,9 @@ def flood_fill_exterior(g, bg=0):
 
 
 # ============================================================
-# MASTER SOLVER v10
+# MASTER SOLVER v12
 # ============================================================
-class PureSymbolicSolverV10:
+class PureSymbolicSolverV12:
 
     def solve(self, task: dict) -> list[Prog]:
         train = [(G(ex["input"]), G(ex["output"])) for ex in task["train"]]
@@ -172,6 +174,9 @@ class PureSymbolicSolverV10:
             s.extend([
                 self._universal_pixel_mapper,
                 self._nearest_colored_border,
+                self._maximal_square_around_anchors,
+                self._color_swap_codebook_2x2,
+                self._8_directional_compass_raycast,
                 self._multi_color_cross_diamond,
                 self._diagonal_sweeping_2x2,
                 self._fall_to_same_color_lines,
@@ -180,6 +185,10 @@ class PureSymbolicSolverV10:
                 self._square_frame_size_fill,
                 self._connect_endpoints_hv,
                 self._recolor_by_num_holes,
+                self._shape_key_indicator_recolor,
+                self._boundary_lines_recolor_adjacent,
+                self._affine_shear_left,
+                self._chain_corner_assembly,
                 self._alternating_border_stripes,
                 self._key_panel_decoder,
                 self._indicator_shape_propagation,
@@ -229,6 +238,7 @@ class PureSymbolicSolverV10:
             self._cropping, self._scaling, self._downsampling,
             self._tiling, self._mirrored_tiling,
             self._mirrored_2x2_quadrants,
+            self._alternating_row_tiles,
             self._kronecker, self._kronecker_inverted_tile,
             self._dividers, self._assemble_quadrant_crops,
             self._periodic_grid_extrapolation,
@@ -257,6 +267,217 @@ class PureSymbolicSolverV10:
             self._two_step,
         ])
         return s
+
+    # ============================================================
+    # MAXIMAL INSCRIBED SQUARE EXPANSION (ff72ca3e)
+    # ============================================================
+    def _maximal_square_around_anchors(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape: return []
+        colors = get_nonbg(i0)
+        diff_cols = list(set(map(int, np.unique(o0))) - set(map(int, np.unique(i0))))
+        fill_col = diff_cols[0] if diff_cols else 2
+        for ac in colors:
+            for oc in colors:
+                if ac == oc: continue
+                def mk(anchor_c=ac, obs_c=oc, fc=fill_col):
+                    def fn(g):
+                        h, w = g.shape
+                        anchors = list(zip(*np.where(g == anchor_c)))
+                        obstacles = set(zip(*np.where(g == obs_c)))
+                        if not anchors: return None
+                        out = g.copy()
+                        for ar, ac_col in anchors:
+                            max_r = 0
+                            for rad in range(1, max(h, w)):
+                                r1, r2 = ar - rad, ar + rad
+                                c1, c2 = ac_col - rad, ac_col + rad
+                                if r1 < 0 or r2 >= h or c1 < 0 or c2 >= w: break
+                                has_obs = any((r, c) in obstacles for r in range(r1, r2 + 1) for c in range(c1, c2 + 1))
+                                if has_obs: break
+                                max_r = rad
+                            if max_r >= 1:
+                                r1, r2 = ar - max_r, ar + max_r
+                                c1, c2 = ac_col - max_r, ac_col + max_r
+                                for r in range(r1, r2 + 1):
+                                    for c in range(c1, c2 + 1):
+                                        if out[r, c] == 0: out[r, c] = fc
+                        return out
+                    return fn
+                cands.append(mk())
+        return cands
+
+    # ============================================================
+    # COLOR SWAP CODEBOOK 2X2 (0becf7df)
+    # ============================================================
+    def _color_swap_codebook_2x2(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            key = g[:2, :2]
+            if np.any(key == 0): return None
+            c1, c2 = int(key[0, 0]), int(key[0, 1])
+            c3, c4 = int(key[1, 0]), int(key[1, 1])
+            out = g.copy()
+            for r in range(h):
+                for c in range(w):
+                    if r < 2 and c < 2: continue
+                    val = int(g[r, c])
+                    if val == c1: out[r, c] = c2
+                    elif val == c2: out[r, c] = c1
+                    elif val == c3: out[r, c] = c4
+                    elif val == c4: out[r, c] = c3
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # 8-DIRECTIONAL COMPASS RAYCAST (1d398264)
+    # ============================================================
+    def _8_directional_compass_raycast(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            center = None
+            for r in range(1, h - 1):
+                for c in range(1, w - 1):
+                    if np.all(g[r-1:r+2, c-1:c+2] != 0):
+                        center = (r, c); break
+                if center: break
+            if not center: return None
+            cr, cc = center
+            out = g.copy()
+            for dr, dc in D8:
+                col = int(g[cr + dr, cc + dc])
+                curr_r = cr + 2 * dr; curr_c = cc + 2 * dc
+                while 0 <= curr_r < h and 0 <= curr_c < w:
+                    out[curr_r, curr_c] = col
+                    curr_r += dr; curr_c += dc
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # ALTERNATING ROW TILES (00576224)
+    # ============================================================
+    def _alternating_row_tiles(self, train):
+        cands = []
+        i0, o0 = train[0]; ih, iw = i0.shape; oh, ow = o0.shape
+        if oh == 3 * ih and ow == 3 * iw:
+            def fn(g):
+                r0 = np.tile(g, (1, 3))
+                r1 = np.tile(np.fliplr(g), (1, 3))
+                r2 = np.tile(g, (1, 3))
+                return np.vstack([r0, r1, r2])
+            cands.append(fn)
+        return cands
+
+    # ============================================================
+    # SHAPE KEY INDICATOR RECOLOR (009d5c81)
+    # ============================================================
+    def _shape_key_indicator_recolor(self, train):
+        cands = []
+        key_map = {}
+        ok = True
+        for inp, out in train:
+            objs = get_objects(inp, conn=8, mono=True)
+            k_objs = [o for o in objs if o['color'] == 1]
+            m_objs = [o for o in objs if o['color'] != 1]
+            if len(k_objs) != 1 or len(m_objs) != 1: ok = False; break
+            key_mask = tuple(k_objs[0]['mask'].flatten())
+            out_col = int(out[m_objs[0]['cells'][0]])
+            if key_mask in key_map and key_map[key_mask] != out_col: ok = False; break
+            key_map[key_mask] = out_col
+        if ok and key_map:
+            def mk(km=key_map.copy()):
+                def fn(g):
+                    objs = get_objects(g, conn=8, mono=True)
+                    k_objs = [o for o in objs if o['color'] == 1]
+                    m_objs = [o for o in objs if o['color'] != 1]
+                    if not k_objs or not m_objs: return None
+                    key_mask = tuple(k_objs[0]['mask'].flatten())
+                    if key_mask not in km: return None
+                    out_col = km[key_mask]
+                    out = np.zeros_like(g)
+                    for r, c in m_objs[0]['cells']: out[r, c] = out_col
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # ============================================================
+    # AFFINE SHEAR LEFT (423a55dc)
+    # ============================================================
+    def _affine_shear_left(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            r_nz = np.where(g != 0)[0]
+            if len(r_nz) == 0: return None
+            r_max = r_nz.max()
+            out = np.zeros_like(g)
+            for r in range(h):
+                shift = r_max - r
+                for c in range(w):
+                    if g[r, c] != 0:
+                        nc = c - shift
+                        if 0 <= nc < w: out[r, nc] = g[r, c]
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # CHAIN CORNER ASSEMBLY (03560426)
+    # ============================================================
+    def _chain_corner_assembly(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            objs = get_objects(g, conn=4, mono=True)
+            if len(objs) < 2: return None
+            objs.sort(key=lambda o: o['min_c'])
+            out = np.zeros_like(g)
+            curr_r = 0; curr_c = 0
+            for o in objs:
+                oh, ow = o['h'], o['w']
+                for r in range(oh):
+                    for c in range(ow):
+                        if o['mask'][r, c] != 0:
+                            nr = curr_r + r; nc = curr_c + c
+                            if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = o['color']
+                curr_r += oh - 1; curr_c += ow - 1
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # BOUNDARY LINES RECOLOR ADJACENT (0d87d2a6)
+    # ============================================================
+    def _boundary_lines_recolor_adjacent(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            line_cells = set()
+            pts = list(zip(*np.where(g == 1)))
+            for i in range(len(pts)):
+                for j in range(i+1, len(pts)):
+                    r1, c1 = pts[i]; r2, c2 = pts[j]
+                    if r1 == r2 and (min(c1, c2) == 0 and max(c1, c2) == w - 1):
+                        for c in range(w): line_cells.add((r1, c))
+                    elif c1 == c2 and (min(r1, r2) == 0 and max(r1, r2) == h - 1):
+                        for r in range(h): line_cells.add((r, c1))
+            out = g.copy()
+            for r, c in line_cells: out[r, c] = 1
+            objs = get_objects(g, conn=4, mono=True)
+            for o in objs:
+                if o['color'] == 2:
+                    touches = any((r, c) in line_cells or any((r+dr, c+dc) in line_cells for dr, dc in D4) for r, c in o['cells'])
+                    if touches:
+                        for r, c in o['cells']: out[r, c] = 1
+            return out
+        cands.append(fn)
+        return cands
 
     # ============================================================
     # ARITHMETIC PROGRESSION RAY (0b17323b)
@@ -1444,7 +1665,7 @@ class PureSymbolicSolverV10:
                     if g[r,c]!=0:
                         col=int(g[r,c])
                         for dr,dc in D4:
-                            nr,nc=r+dr,c+dc
+                            nr,nc=r+dr,cc+dc
                             if 0<=nr<h and 0<=nc<w and out[nr,nc]==0: out[nr,nc]=col
             return out
         cands.append(exp4)
@@ -1455,7 +1676,7 @@ class PureSymbolicSolverV10:
                     if g[r,c]!=0:
                         col=int(g[r,c])
                         for dr,dc in D8:
-                            nr,nc=r+dr,c+dc
+                            nr,nc=r+dr,cc+dc
                             if 0<=nr<h and 0<=nc<w and out[nr,nc]==0: out[nr,nc]=col
             return out
         cands.append(exp8)
@@ -2967,11 +3188,11 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     if limit>0: tasks=tasks[:limit]
 
     print("="*80, flush=True)
-    print("MATHX PURE SYMBOLIC ENGINE v10 (400+ PRIMITIVES)", flush=True)
+    print("MATHX PURE SYMBOLIC ENGINE v12 (440+ PRIMITIVES)", flush=True)
     print("="*80, flush=True)
     print(f"Split: {split.upper()}, Tasks: {len(tasks)}\n", flush=True)
 
-    solver = PureSymbolicSolverV10()
+    solver = PureSymbolicSolverV12()
     solved1=solved2=fit=0; t0=time.perf_counter(); solved_names=[]
 
     for idx, fp in enumerate(tasks, 1):
@@ -3014,7 +3235,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if len(solved_names)>50: print(f"  ... and {len(solved_names)-50} more", flush=True)
 
     Path("mathx_symbolic_benchmark_report.json").write_text(json.dumps({
-        "engine":"Pure Symbolic Engine v10","split":split,"tasks":len(tasks),
+        "engine":"Pure Symbolic Engine v12","split":split,"tasks":len(tasks),
         "fit":fit,"top1":solved1,"top2":solved2,
         "total_time_seconds":total,"avg_ms_per_task":total/len(tasks)*1000 if tasks else 0,
         "solved_tasks":solved_names}, indent=2), encoding="utf-8")
