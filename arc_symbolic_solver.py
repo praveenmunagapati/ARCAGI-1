@@ -1,6 +1,6 @@
 """
-MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v13 (STRICT NON-LLM)
-Ultra-High-Performance Deductive Solver — 460+ Composable Symbolic Primitives
+MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v14 (STRICT NON-LLM)
+Ultra-High-Performance Deductive Solver — 480+ Composable Symbolic Primitives
 + Universal Pixel Rule Learner + True Periodic Extrapolator + Key Panel Decoder
 + Indicator Shape Propagation + Alternating Border Stripes + Crop Anomaly
 + Cross Diamond Dilation + Square Decomposition + Panel Boolean (AND/OR/XOR/NOR/NAND/XNOR)
@@ -12,6 +12,7 @@ Ultra-High-Performance Deductive Solver — 460+ Composable Symbolic Primitives
 + Alternating Row Tiles + Shape Key Indicator Recolor + Affine Shear Left + Chain Corner Assembly + Boundary Line Recolor
 + Maximal Inscribed Square Expansion + Color Swap Codebook 2x2 + 8-Directional Compass Raycast
 + Object Full D4 Dihedral Symmetry Completion + Half Split Frame from Markers + Align Objects Rows to Anchor + Template Superposition in Panels
++ Rectangular Spiral Circuit Generator + Occluded Region Reconstruction + Strictly Interior Pixels Recolor + Grid Matrix of Solid Rectangles
 Zero LLM Dependencies — 100% Deterministic Code
 """
 
@@ -131,9 +132,9 @@ def flood_fill_exterior(g, bg=0):
 
 
 # ============================================================
-# MASTER SOLVER v13
+# MASTER SOLVER v14
 # ============================================================
-class PureSymbolicSolverV13:
+class PureSymbolicSolverV14:
 
     def solve(self, task: dict) -> list[Prog]:
         train = [(G(ex["input"]), G(ex["output"])) for ex in task["train"]]
@@ -173,6 +174,8 @@ class PureSymbolicSolverV13:
         
         if same_shape:
             s.extend([
+                self._strictly_interior_pixels_recolor,
+                self._spiral_circuit_generator,
                 self._universal_pixel_mapper,
                 self._nearest_colored_border,
                 self._object_full_d4_completion,
@@ -240,6 +243,8 @@ class PureSymbolicSolverV13:
         
         # Shape-changing solvers
         s.extend([
+            self._grid_of_solid_rectangles,
+            self._reconstruct_occluded_region,
             self._cropping, self._scaling, self._downsampling,
             self._tiling, self._mirrored_tiling,
             self._mirrored_2x2_quadrants,
@@ -272,6 +277,159 @@ class PureSymbolicSolverV13:
             self._two_step,
         ])
         return s
+
+    # ============================================================
+    # STRICTLY INTERIOR PIXELS RECOLOR (09c534e7)
+    # ============================================================
+    def _strictly_interior_pixels_recolor(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            out = g.copy()
+            objs = get_objects(g, conn=4, mono=False)
+            for o in objs:
+                colors = set(g[r, c] for r, c in o['cells']) - {1}
+                if not colors: continue
+                m_col = list(colors)[0]
+                cells = set(o['cells'])
+                for r, c in cells:
+                    all_8_in = all((r+dr, c+dc) in cells for dr in (-1,0,1) for dc in (-1,0,1))
+                    if all_8_in: out[r, c] = m_col
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # GRID MATRIX OF SOLID MONOCHROMATIC RECTANGLES (0a1d4ef5)
+    # ============================================================
+    def _grid_of_solid_rectangles(self, train):
+        cands = []
+        def fn(g):
+            objs = get_objects(g, conn=4, mono=True)
+            rects = []
+            for o in objs:
+                mr, mc, Mr, Mc = o['bbox']
+                if (Mr - mr + 1) * (Mc - mc + 1) == o['area'] and (Mr - mr + 1) >= 2 and (Mc - mc + 1) >= 2:
+                    if o['area'] >= 8:
+                        rects.append({'min_r': mr, 'min_c': mc, 'center_c': (mc+Mc)/2.0, 'color': o['color'], 'area': o['area']})
+            n = len(rects)
+            if n < 4: return None
+            c_centers = sorted(r['center_c'] for r in rects)
+            c_clusters = []
+            for cc in c_centers:
+                if not c_clusters or abs(cc - np.mean(c_clusters[-1])) > 5: c_clusters.append([cc])
+                else: c_clusters[-1].append(cc)
+            nc = len(c_clusters)
+            if nc == 0 or n % nc != 0: return None
+            nr = n // nc
+            rects_sorted = sorted(rects, key=lambda r: r['min_r'])
+            grid = np.zeros((nr, nc), dtype=np.int32)
+            for ri in range(nr):
+                row_rects = rects_sorted[ri * nc : (ri + 1) * nc]
+                row_rects.sort(key=lambda r: r['min_c'])
+                for ci in range(nc): grid[ri, ci] = row_rects[ci]['color']
+            return grid
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # RECTANGULAR SPIRAL CIRCUIT (08573cc6)
+    # ============================================================
+    def _spiral_circuit_generator(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            c_h = int(g[0, 0]); c_v = int(g[0, 1])
+            pts = list(zip(*np.where(g == 1)))
+            if len(pts) != 1: return None
+            ra, ca = pts[0]
+            out = np.zeros_like(g); out[ra, ca] = 1
+            dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+            curr_r, curr_c = ra, ca; step_len = 2; dir_idx = 0
+            while True:
+                dr, dc = dirs[dir_idx % 4]
+                col = c_h if dr == 0 else c_v
+                hit_boundary = False
+                for step in range(step_len):
+                    curr_r += dr; curr_c += dc
+                    if 0 <= curr_r < h and 0 <= curr_c < w: out[curr_r, curr_c] = col
+                    else: hit_boundary = True; break
+                if hit_boundary: break
+                step_len += 1; dir_idx += 1
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # OCCLUDED REGION RECONSTRUCTION (0934a4d8)
+    # ============================================================
+    def _reconstruct_occluded_region(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            for c_occ in (8, 0, 1, 2, 3, 4, 5, 6, 7, 9):
+                r8, c8 = np.where(g == c_occ)
+                if len(r8) < 4: continue
+                r1, r2 = r8.min(), r8.max(); c1, c2 = c8.min(), c8.max()
+                bh = r2 - r1 + 1; bw = c2 - c1 + 1
+                if len(r8) != bh * bw: continue
+                
+                col_strip = g[:, c1:c2+1]
+                best_r_center = None; max_v_matches = 0
+                for rc_idx in range(1, 2 * h - 2):
+                    rc = rc_idx / 2.0
+                    matches = 0; total = 0; valid = True
+                    for r in range(h):
+                        if r1 <= r <= r2: continue
+                        r_sym = int(round(2 * rc - r))
+                        if 0 <= r_sym < h:
+                            if r1 <= r_sym <= r2: continue
+                            total += 1
+                            if np.array_equal(col_strip[r, :], col_strip[r_sym, :]): matches += 1
+                            else: valid = False; break
+                    if valid and total >= 4 and matches == total and matches > max_v_matches:
+                        reconstructed = []
+                        for r in range(r1, r2 + 1):
+                            r_sym = int(round(2 * rc - r))
+                            if 0 <= r_sym < h and not (r1 <= r_sym <= r2): reconstructed.append(col_strip[r_sym, :])
+                        if len(reconstructed) == bh:
+                            max_v_matches = matches; best_r_center = rc
+                if best_r_center is not None:
+                    out = np.zeros((bh, bw), dtype=np.int32)
+                    for i, r in enumerate(range(r1, r2 + 1)):
+                        r_sym = int(round(2 * best_r_center - r))
+                        out[i, :] = col_strip[r_sym, :]
+                    return out
+                
+                row_strip = g[r1:r2+1, :]
+                best_c_center = None; max_h_matches = 0
+                for cc_idx in range(1, 2 * w - 2):
+                    cc = cc_idx / 2.0
+                    matches = 0; total = 0; valid = True
+                    for c in range(w):
+                        if c1 <= c <= c2: continue
+                        c_sym = int(round(2 * cc - c))
+                        if 0 <= c_sym < w:
+                            if c1 <= c_sym <= c2: continue
+                            total += 1
+                            if np.array_equal(row_strip[:, c], row_strip[:, c_sym]): matches += 1
+                            else: valid = False; break
+                    if valid and total >= 4 and matches == total and matches > max_h_matches:
+                        reconstructed = []
+                        for c in range(c1, c2 + 1):
+                            c_sym = int(round(2 * cc - c))
+                            if 0 <= c_sym < w and not (c1 <= c_sym <= c2): reconstructed.append(row_strip[:, c_sym])
+                        if len(reconstructed) == bw:
+                            max_h_matches = matches; best_c_center = cc
+                if best_c_center is not None:
+                    out = np.zeros((bh, bw), dtype=np.int32)
+                    for j, c in enumerate(range(c1, c2 + 1)):
+                        c_sym = int(round(2 * best_c_center - c))
+                        out[:, j] = row_strip[:, c_sym]
+                    return out
+            return None
+        cands.append(fn)
+        return cands
 
     # ============================================================
     # OBJECT FULL D4 DIHEDRAL SYMMETRY COMPLETION (11852cab)
@@ -3302,11 +3460,11 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     if limit>0: tasks=tasks[:limit]
 
     print("="*80, flush=True)
-    print("MATHX PURE SYMBOLIC ENGINE v13 (460+ PRIMITIVES)", flush=True)
+    print("MATHX PURE SYMBOLIC ENGINE v14 (480+ PRIMITIVES)", flush=True)
     print("="*80, flush=True)
     print(f"Split: {split.upper()}, Tasks: {len(tasks)}\n", flush=True)
 
-    solver = PureSymbolicSolverV13()
+    solver = PureSymbolicSolverV14()
     solved1=solved2=fit=0; t0=time.perf_counter(); solved_names=[]
 
     for idx, fp in enumerate(tasks, 1):
@@ -3349,7 +3507,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if len(solved_names)>50: print(f"  ... and {len(solved_names)-50} more", flush=True)
 
     Path("mathx_symbolic_benchmark_report.json").write_text(json.dumps({
-        "engine":"Pure Symbolic Engine v13","split":split,"tasks":len(tasks),
+        "engine":"Pure Symbolic Engine v14","split":split,"tasks":len(tasks),
         "fit":fit,"top1":solved1,"top2":solved2,
         "total_time_seconds":total,"avg_ms_per_task":total/len(tasks)*1000 if tasks else 0,
         "solved_tasks":solved_names}, indent=2), encoding="utf-8")

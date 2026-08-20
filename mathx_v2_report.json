@@ -1,9 +1,0 @@
-{
-  "engine": "v2",
-  "split": "training",
-  "tasks": 400,
-  "fit": 53,
-  "top1": 45,
-  "top2": 46,
-  "time": 6.161313099999461
-}
