@@ -3980,7 +3980,7 @@ class PureSymbolicSolverV17:
         
         base_solvers = [self._rigid, self._palette, self._holes, self._gravity,
                         self._symmetry, self._mirror_complete, self._invert_colors,
-                        self._cellular, self._universal_pixel_mapper]
+                        self._cellular]
         
         for prep in preps:
             if time.perf_counter()-t0>TASK_TIMEOUT-0.3: break
@@ -4098,8 +4098,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if s2: solved2+=1
         if s1 or s2: solved_names.append(fp.stem)
         st="SOLVED(1)" if s1 else ("SOLVED(2)" if s2 else ("FIT" if sols else "MISS"))
-        if idx<=30 or idx%50==0 or idx==len(tasks) or s1 or s2:
-            print(f"[{idx:03d}/{len(tasks)}] {fp.stem:12s} | {st:10s} | rules={len(sols):2d} | {dt*1000:.0f}ms", flush=True)
+        print(f"[{idx:03d}/{len(tasks)}] {fp.stem:12s} | {st:10s} | rules={len(sols):2d} | {dt*1000:.0f}ms", flush=True)
 
     total=time.perf_counter()-t0
     print(f"\n{'='*80}", flush=True)

@@ -1,5 +1,5 @@
 import json, time, argparse
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from arc_symbolic_solver import PureSymbolicSolverV17, G, safe, exact
 
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     print(f"Running {args.split.upper()} benchmark on {len(tasks)} tasks with {args.workers} workers...")
     
     t0 = time.perf_counter()
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(eval_single, tasks))
     total_t = time.perf_counter() - t0
 
