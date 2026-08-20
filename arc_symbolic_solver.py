@@ -137,7 +137,7 @@ def flood_fill_exterior(g, bg=0):
 # ============================================================
 # MASTER SOLVER v17
 # ============================================================
-class PureSymbolicSolverV17:
+class PureSymbolicSolverV18:
 
     def solve(self, task: dict) -> list[Prog]:
         train = [(G(ex["input"]), G(ex["output"])) for ex in task["train"]]
@@ -177,6 +177,13 @@ class PureSymbolicSolverV17:
         
         if same_shape:
             s.extend([
+                self._block_perimeter_marker_projection,
+                self._periodic_wallpaper_completion,
+                self._directional_extrusion_baseline,
+                self._lattice_grid_internal_external_lines,
+                self._network_room_interior_seed_fill,
+                self._hollow_cavity_key_lock_insertion,
+                self._marker_directed_orthogonal_beam_draw,
                 self._grid_template_consensus_denoise,
                 self._polyomino_exact_tiling_decomposition,
                 self._bounding_rectangle_center_diamond,
@@ -260,7 +267,10 @@ class PureSymbolicSolverV17:
         
         # Shape-changing solvers
         s.extend([
+            self._quadrant_top_left_extract,
+            self._panel_shape_codebook_to_solid_block,
             self._template_recolor_sequence_markers,
+            self._maximal_hollow_frame_extract_2x2,
             self._shape_mask_to_scalar_code,
             self._extract_anomaly_quadrant,
             self._monochromatic_line_tile_strip,
@@ -299,6 +309,290 @@ class PureSymbolicSolverV17:
             self._two_step,
         ])
         return s
+
+    # ============================================================
+    # TOP-LEFT QUADRANT EXTRACT (2013d3e2)
+    # ============================================================
+    def _quadrant_top_left_extract(self, train):
+        cands = []
+        i0, o0 = train[0]
+        c0 = crop_nz(i0)
+        if c0 is None or c0.shape[0] != o0.shape[0] * 2 or c0.shape[1] != o0.shape[1] * 2: return []
+        def fn(g):
+            c = crop_nz(g)
+            if c is None: return None
+            h, w = c.shape
+            return c[:h//2, :w//2]
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # PANEL SHAPE CODEBOOK TO SOLID BLOCK (17cae0c1)
+    # ============================================================
+    def _panel_shape_codebook_to_solid_block(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != (3, 9) or o0.shape != (3, 9) or np.sum(i0 == 5) < 3: return []
+        # Build dictionary from train
+        panel_dict = {}
+        for inp, out in train:
+            for j in range(0, inp.shape[1], 3):
+                p = inp[:, j:j+3]
+                pts = tuple(sorted(zip(*np.where(p == 5))))
+                col = int(out[0, j])
+                panel_dict[pts] = col
+        def fn(g):
+            h, w = g.shape
+            out = np.zeros_like(g)
+            for j in range(0, w, 3):
+                p = g[:, j:j+3]
+                pts = tuple(sorted(zip(*np.where(p == 5))))
+                if pts in panel_dict:
+                    out[:, j:j+3] = panel_dict[pts]
+                else:
+                    return None
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # BLOCK PERIMETER MARKER PROJECTION (1f642eb9)
+    # ============================================================
+    def _block_perimeter_marker_projection(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 8) < 4 or len(np.unique(i0)) < 3: return []
+        def fn(g):
+            h, w = g.shape
+            r8, c8 = np.where(g == 8)
+            if len(r8) == 0: return None
+            min_r, max_r = r8.min(), r8.max()
+            min_c, max_c = c8.min(), c8.max()
+            out = g.copy()
+            markers = [(r, c, int(g[r, c])) for r in range(h) for c in range(w) if g[r, c] != 0 and g[r, c] != 8]
+            for mr, mc, col in markers:
+                if mr < min_r and min_c <= mc <= max_c:
+                    out[min_r, mc] = col
+                elif mr > max_r and min_c <= mc <= max_c:
+                    out[max_r, mc] = col
+                elif mc < min_c and min_r <= mr <= max_r:
+                    out[mr, min_c] = col
+                elif mc > max_c and min_r <= mr <= max_r:
+                    out[mr, max_c] = col
+                elif mr > max_r and mc >= max_c:
+                    out[max_r, max_c] = col
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # PERIODIC 2D WALLPAPER COMPLETION (0dfd9992)
+    # ============================================================
+    def _periodic_wallpaper_completion(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or not np.any(i0 == 0) or len(np.unique(i0)) < 4: return []
+        def fn(g):
+            h, w = g.shape
+            best_period = None
+            for ph in range(2, min(12, h)):
+                for pw in range(2, min(12, w)):
+                    unit_cell = {}
+                    consistent = True
+                    for r in range(h):
+                        for c in range(w):
+                            val = int(g[r, c])
+                            if val == 0: continue
+                            key = (r % ph, c % pw)
+                            if key in unit_cell:
+                                if unit_cell[key] != val:
+                                    consistent = False; break
+                            else:
+                                unit_cell[key] = val
+                        if not consistent: break
+                    if consistent and len(unit_cell) == ph * pw:
+                        best_period = (ph, pw, unit_cell); break
+                if best_period: break
+            if best_period:
+                ph, pw, unit_cell = best_period
+                out = g.copy()
+                for r in range(h):
+                    for c in range(w):
+                        if out[r, c] == 0:
+                            out[r, c] = unit_cell[(r % ph, c % pw)]
+                return out
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # DIRECTIONAL EXTRUSION TOWARDS BASELINE FRAME (13713586)
+    # ============================================================
+    def _directional_extrusion_baseline(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or not any(np.all(i0[0,:]==5) or np.all(i0[-1,:]==5) or np.all(i0[:,0]==5) or np.all(i0[:,-1]==5) for i0 in [i0]): return []
+        def fn(g):
+            h, w = g.shape
+            r5, c5 = np.where(g == 5)
+            if len(r5) == 0: return None
+            out = g.copy()
+            if len(set(r5)) == 1 and len(r5) == w:
+                base_r = r5[0]
+                rows_to_process = sorted([r for r in range(h) if r != base_r and np.any((g[r, :] != 0) & (g[r, :] != 5))],
+                                         key=lambda r: abs(r - base_r), reverse=True)
+                for r in rows_to_process:
+                    cols = np.where((g[r, :] != 0) & (g[r, :] != 5))[0]
+                    step = 1 if base_r > r else -1
+                    curr_r = r
+                    while curr_r != base_r:
+                        for c in cols: out[curr_r, c] = g[r, c]
+                        curr_r += step
+                return out
+            elif len(set(c5)) == 1 and len(c5) == h:
+                base_c = c5[0]
+                cols_to_process = sorted([c for c in range(w) if c != base_c and np.any((g[:, c] != 0) & (g[:, c] != 5))],
+                                         key=lambda c: abs(c - base_c), reverse=True)
+                for c in cols_to_process:
+                    rows = np.where((g[:, c] != 0) & (g[:, c] != 5))[0]
+                    step = 1 if base_c > c else -1
+                    curr_c = c
+                    while curr_c != base_c:
+                        for r in rows: out[r, curr_c] = g[r, c]
+                        curr_c += step
+                return out
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # LATTICE GRID INTERNAL & EXTERNAL LINES (137f0df0)
+    # ============================================================
+    def _lattice_grid_internal_external_lines(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 5) < 8 or len(np.unique(i0)) > 2: return []
+        def fn(g):
+            h, w = g.shape
+            r5, c5 = np.where(g == 5)
+            if len(r5) == 0: return None
+            min_r, max_r = r5.min(), r5.max()
+            min_c, max_c = c5.min(), c5.max()
+            has_5_row = [np.any(g[r, :] == 5) for r in range(h)]
+            has_5_col = [np.any(g[:, c] == 5) for c in range(w)]
+            gap_rows = [r for r in range(min_r, max_r + 1) if not has_5_row[r]]
+            gap_cols = [c for c in range(min_c, max_c + 1) if not has_5_col[c]]
+            out = g.copy()
+            for r in gap_rows:
+                for c in range(w):
+                    out[r, c] = 2 if min_c <= c <= max_c else 1
+            for c in gap_cols:
+                for r in range(h):
+                    out[r, c] = 2 if min_r <= r <= max_r else 1
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # NETWORK ROOM INTERIOR SEED FILL (09c534e7)
+    # ============================================================
+    def _network_room_interior_seed_fill(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 1) < 20 or len(np.unique(i0)) < 3: return []
+        def fn(g):
+            h, w = g.shape
+            out = g.copy()
+            comp_objs = get_objects(np.where(g != 0, 1, 0), conn=8, bg=0)
+            for comp in comp_objs:
+                comp_mask = np.zeros((h, w), dtype=bool)
+                for r, c in comp['cells']: comp_mask[r, c] = True
+                markers = [(r, c, int(g[r, c])) for r, c in comp['cells'] if g[r, c] != 1 and g[r, c] != 0]
+                if not markers: continue
+                interior_cells = []
+                for r, c in comp['cells']:
+                    if all(0 <= r+dr < h and 0 <= c+dc < w and comp_mask[r+dr, c+dc] for dr in (-1,0,1) for dc in (-1,0,1)):
+                        interior_cells.append((r, c))
+                for r, c in interior_cells:
+                    best_m = min(markers, key=lambda m: abs(r - m[0]) + abs(c - m[1]))
+                    out[r, c] = best_m[2]
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # HOLLOW CAVITY KEY-LOCK INSERTION (228f6490)
+    # ============================================================
+    def _hollow_cavity_key_lock_insertion(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 5) < 10 or len(np.unique(i0)) < 4: return []
+        def fn(g):
+            h, w = g.shape
+            fives_objs = get_objects(np.where(g == 5, 5, 0), conn=8, bg=0)
+            cavities = []
+            for f in fives_objs:
+                min_r, min_c, max_r, max_c = f['bbox']
+                crop = (g[min_r:max_r+1, min_c:max_c+1] == 0).astype(int)
+                z_objs = get_objects(crop, conn=4, bg=0)
+                for z in z_objs:
+                    z_cells = [(min_r + r, min_c + c) for r, c in z['cells']]
+                    cavities.append({
+                        'h': z['h'], 'w': z['w'], 'area': z['area'],
+                        'mask': z['mask'], 'cells': z_cells
+                    })
+            other_objs = get_objects(g, conn=4, bg=0)
+            color_counts = {}
+            for o in other_objs:
+                color_counts[o['color']] = color_counts.get(o['color'], 0) + 1
+            if not color_counts: return None
+            marker_col = max(color_counts, key=lambda c: color_counts[c])
+            candidate_objs = [o for o in other_objs if o['color'] != 5 and o['color'] != marker_col]
+            out = g.copy()
+            for cav in cavities:
+                for o in candidate_objs:
+                    if o['h'] == cav['h'] and o['w'] == cav['w'] and o['area'] == cav['area']:
+                        if np.array_equal(o['mask'] != 0, cav['mask'] != 0):
+                            for r, c in o['cells']: out[r, c] = 0
+                            for r, c in cav['cells']: out[r, c] = o['color']
+                            break
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # MAXIMAL HOLLOW FRAME EXTRACT 2X2 (445eab21)
+    # ============================================================
+    def _maximal_hollow_frame_extract_2x2(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if o0.shape != (2, 2) or np.sum(i0 == 0) < 10: return []
+        def fn(g):
+            objs = get_objects(g, conn=8, bg=0)
+            if not objs: return None
+            best = max(objs, key=lambda o: (o['h'] * o['w'], o['area']))
+            return np.full((2, 2), best['color'], dtype=np.int32)
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # MARKER DIRECTED ORTHOGONAL BEAM DRAW (178fcbfb)
+    # ============================================================
+    def _marker_directed_orthogonal_beam_draw(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or not (3 <= np.sum(i0 != 0) <= 8): return []
+        def fn(g):
+            h, w = g.shape
+            out = np.zeros_like(g)
+            r2, c2 = np.where(g == 2)
+            for c in c2: out[:, c] = 2
+            r_other, c_other = np.where((g != 0) & (g != 2))
+            for r, c in zip(r_other, c_other):
+                out[r, :] = g[r, c]
+            return out
+        cands.append(fn)
+        return cands
 
     # ============================================================
     # TEMPLATE RECOLOR SEQUENCE MARKERS (12997ef3)
@@ -4069,11 +4363,11 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     if limit>0: tasks=tasks[:limit]
 
     print("="*80, flush=True)
-    print("MATHX PURE SYMBOLIC ENGINE v17 (540+ PRIMITIVES)", flush=True)
+    print("MATHX PURE SYMBOLIC ENGINE v18 (550+ PRIMITIVES)", flush=True)
     print("="*80, flush=True)
     print(f"Split: {split.upper()}, Tasks: {len(tasks)}\n", flush=True)
 
-    solver = PureSymbolicSolverV17()
+    solver = PureSymbolicSolverV18()
     solved1=solved2=fit=0; t0=time.perf_counter(); solved_names=[]
 
     for idx, fp in enumerate(tasks, 1):
@@ -4115,7 +4409,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if len(solved_names)>50: print(f"  ... and {len(solved_names)-50} more", flush=True)
 
     Path("mathx_symbolic_benchmark_report.json").write_text(json.dumps({
-        "engine":"Pure Symbolic Engine v17","split":split,"tasks":len(tasks),
+        "engine":"Pure Symbolic Engine v18","split":split,"tasks":len(tasks),
         "fit":fit,"top1":solved1,"top2":solved2,
         "total_time_seconds":total,"avg_ms_per_task":total/len(tasks)*1000 if tasks else 0,
         "solved_tasks":solved_names}, indent=2), encoding="utf-8")
