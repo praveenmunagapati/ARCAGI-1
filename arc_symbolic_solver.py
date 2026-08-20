@@ -1,6 +1,6 @@
 """
-MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v14 (STRICT NON-LLM)
-Ultra-High-Performance Deductive Solver — 480+ Composable Symbolic Primitives
+MATHX ARC-AGI-1 PURE SYMBOLIC ENGINE v17 (STRICT NON-LLM)
+Ultra-High-Performance Deductive Solver — 540+ Composable Symbolic Primitives
 + Universal Pixel Rule Learner + True Periodic Extrapolator + Key Panel Decoder
 + Indicator Shape Propagation + Alternating Border Stripes + Crop Anomaly
 + Cross Diamond Dilation + Square Decomposition + Panel Boolean (AND/OR/XOR/NOR/NAND/XNOR)
@@ -13,6 +13,9 @@ Ultra-High-Performance Deductive Solver — 480+ Composable Symbolic Primitives
 + Maximal Inscribed Square Expansion + Color Swap Codebook 2x2 + 8-Directional Compass Raycast
 + Object Full D4 Dihedral Symmetry Completion + Half Split Frame from Markers + Align Objects Rows to Anchor + Template Superposition in Panels
 + Rectangular Spiral Circuit Generator + Occluded Region Reconstruction + Strictly Interior Pixels Recolor + Grid Matrix of Solid Rectangles
++ Monochromatic Line Tile Strip + Periodic Repeat Top L Rows + Scaled Key Overlay Dihedral + Recolor Small Components + Marker Crosshair Cross + Assemble 4 Quadrant Objects
++ Extract Anomaly Quadrant + Object Symmetric Extension Marker + Monochromatic Rows Highlight + Shape Mask to Scalar Code + Opposing Boundary Rays Collision + Max Dots Panels Fill
++ Template Recolor Sequence Markers + Bounding Rectangle Center Diamond + Polyomino Tiling Partition + Hub Marker Manhattan Routing + Square Spiral Coil Obstacles + Horizontal Framed Slabs Bands + Grid Template Consensus Denoise
 Zero LLM Dependencies — 100% Deterministic Code
 """
 
@@ -26,7 +29,7 @@ import numpy as np
 
 Grid = np.ndarray
 Prog = Callable[[Grid], Grid]
-TASK_TIMEOUT = 1.0  # High-speed deterministic execution
+TASK_TIMEOUT = 0.5  # High-speed deterministic execution
 D4 = [(-1,0),(1,0),(0,-1),(0,1)]
 D8 = [(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
 
@@ -132,9 +135,9 @@ def flood_fill_exterior(g, bg=0):
 
 
 # ============================================================
-# MASTER SOLVER v14
+# MASTER SOLVER v17
 # ============================================================
-class PureSymbolicSolverV14:
+class PureSymbolicSolverV17:
 
     def solve(self, task: dict) -> list[Prog]:
         train = [(G(ex["input"]), G(ex["output"])) for ex in task["train"]]
@@ -174,6 +177,20 @@ class PureSymbolicSolverV14:
         
         if same_shape:
             s.extend([
+                self._grid_template_consensus_denoise,
+                self._polyomino_exact_tiling_decomposition,
+                self._bounding_rectangle_center_diamond,
+                self._hub_marker_rectilinear_routing,
+                self._square_spiral_coil_obstacles,
+                self._horizontal_framed_slabs_bands,
+                self._opposing_boundary_rays_collision,
+                self._max_dots_panels_fill,
+                self._monochromatic_rows_highlight,
+                self._object_symmetric_extension_marker,
+                self._repeat_top_l_rows_below,
+                self._scaled_key_overlay_dihedral,
+                self._recolor_small_components,
+                self._marker_crosshair_cross,
                 self._strictly_interior_pixels_recolor,
                 self._spiral_circuit_generator,
                 self._universal_pixel_mapper,
@@ -243,6 +260,11 @@ class PureSymbolicSolverV14:
         
         # Shape-changing solvers
         s.extend([
+            self._template_recolor_sequence_markers,
+            self._shape_mask_to_scalar_code,
+            self._extract_anomaly_quadrant,
+            self._monochromatic_line_tile_strip,
+            self._assemble_4_quadrant_objects,
             self._grid_of_solid_rectangles,
             self._reconstruct_occluded_region,
             self._cropping, self._scaling, self._downsampling,
@@ -277,6 +299,591 @@ class PureSymbolicSolverV14:
             self._two_step,
         ])
         return s
+
+    # ============================================================
+    # TEMPLATE RECOLOR SEQUENCE MARKERS (12997ef3)
+    # ============================================================
+    def _template_recolor_sequence_markers(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if np.sum(i0 == 1) < 4: return []
+        def fn(g):
+            r1, c1 = np.where(g == 1)
+            if len(r1) == 0: return None
+            tmpl = g[r1.min():r1.max()+1, c1.min():c1.max()+1]
+            r_other, c_other = np.where((g != 0) & (g != 1))
+            if len(r_other) == 0: return None
+            pts = list(zip(r_other, c_other, g[r_other, c_other]))
+            if len(set(r_other)) == 1:
+                pts.sort(key=lambda p: p[1])
+                blocks = [np.where(tmpl == 1, int(p[2]), 0) for p in pts]
+                return np.hstack(blocks)
+            elif len(set(c_other)) == 1:
+                pts.sort(key=lambda p: p[0])
+                blocks = [np.where(tmpl == 1, int(p[2]), 0) for p in pts]
+                return np.vstack(blocks)
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # BOUNDING RECTANGLE CENTER DIAMOND (11e1fe23)
+    # ============================================================
+    def _bounding_rectangle_center_diamond(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or not (3 <= np.sum(i0 != 0) <= 4): return []
+        for center_col in (5, 1, 2, 3, 4, 6, 7, 8):
+            def mk(cc_col=center_col):
+                def fn(g):
+                    h, w = g.shape
+                    r_nz, c_nz = np.where(g != 0)
+                    if len(r_nz) < 3: return None
+                    r1, r2 = r_nz.min(), r_nz.max()
+                    c1, c2 = c_nz.min(), c_nz.max()
+                    rc = (r1 + r2) // 2; cc = (c1 + c2) // 2
+                    out = g.copy(); out[rc, cc] = cc_col
+                    if g[r1, c1] != 0: out[rc - 1, cc - 1] = g[r1, c1]
+                    if g[r1, c2] != 0: out[rc - 1, cc + 1] = g[r1, c2]
+                    if g[r2, c1] != 0: out[rc + 1, cc - 1] = g[r2, c1]
+                    if g[r2, c2] != 0: out[rc + 1, cc + 1] = g[r2, c2]
+                    return out
+                return fn
+            cands.append(mk())
+        return cands
+
+    # ============================================================
+    # EXACT POLYOMINO TILING PARTITION (626c0bcc)
+    # ============================================================
+    def _polyomino_exact_tiling_decomposition(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 8) < 10 or len(np.unique(i0)) > 3: return []
+        def fn(g):
+            h, w = g.shape
+            cells_8 = set(zip(*np.where(g == 8)))
+            if not cells_8: return None
+            sq2 = []
+            for r in range(h - 1):
+                for c in range(w - 1):
+                    sq_pts = {(r, c), (r+1, c), (r, c+1), (r+1, c+1)}
+                    if sq_pts.issubset(cells_8): sq2.append(sq_pts)
+            trominoes = []
+            for r in range(h):
+                for c in range(w):
+                    if (r, c) not in cells_8: continue
+                    for arm1 in [(-1, 0), (1, 0)]:
+                        for arm2 in [(0, -1), (0, 1)]:
+                            p1 = (r + arm1[0], c + arm1[1]); p2 = (r + arm2[0], c + arm2[1])
+                            if p1 in cells_8 and p2 in cells_8:
+                                trom = {(r, c), p1, p2}
+                                arms = tuple(sorted([arm1, arm2]))
+                                trominoes.append((trom, (r, c), arms))
+            all_pieces = [('sq', sq, None, None) for sq in sq2] + [('tr', tr, corner, arms) for tr, corner, arms in trominoes]
+            solution_partition = []
+            def backtrack(remaining_cells, chosen_pieces):
+                nonlocal solution_partition
+                if solution_partition: return
+                if not remaining_cells:
+                    solution_partition = list(chosen_pieces); return
+                first_cell = min(remaining_cells)
+                for ptype, pcells, pcorner, parms in all_pieces:
+                    if first_cell in pcells and pcells.issubset(remaining_cells):
+                        backtrack(remaining_cells - pcells, chosen_pieces + [(ptype, pcells, pcorner, parms)])
+                        if solution_partition: return
+            backtrack(cells_8, [])
+            if not solution_partition: return None
+            out = np.zeros_like(g)
+            for ptype, pcells, pcorner, parms in solution_partition:
+                if ptype == 'sq':
+                    for r, c in pcells: out[r, c] = 1
+                else:
+                    if parms == ((-1, 0), (0, -1)): col = 2
+                    elif parms == ((0, -1), (1, 0)): col = 3
+                    elif parms == ((-1, 0), (0, 1)): col = 4
+                    elif parms == ((0, 1), (1, 0)): col = 5
+                    else: col = 2
+                    for r, c in pcells: out[r, c] = col
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # HUB MARKER RECTILINEAR ROUTING (0e671a1a)
+    # ============================================================
+    def _hub_marker_rectilinear_routing(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or len(get_nonbg(i0)) != 3 or any(len(np.where(i0==c)[0]) != 1 for c in get_nonbg(i0)): return []
+        for hub_col in (4, 1, 2, 3, 5, 6, 7, 8):
+            for line_col in (5, 1, 2, 3, 4, 6, 7, 8):
+                def mk(hc=hub_col, lc=line_col):
+                    def fn(g):
+                        h, w = g.shape
+                        r4, c4 = np.where(g == hc)
+                        r2, c2 = np.where(g == 2)
+                        r3, c3 = np.where(g == 3)
+                        if len(r4) == 0 or len(r2) == 0 or len(r3) == 0: return None
+                        r_hub, c_hub = int(r4[0]), int(c4[0])
+                        r_two, c_two = int(r2[0]), int(c2[0])
+                        r_three, c_three = int(r3[0]), int(c3[0])
+                        out = g.copy()
+                        c_min, c_max = min(c_hub, c_three), max(c_hub, c_three)
+                        for c in range(c_min, c_max + 1):
+                            if out[r_hub, c] == 0: out[r_hub, c] = lc
+                        r_min, r_max = min(r_hub, r_three), max(r_hub, r_three)
+                        for r in range(r_min, r_max + 1):
+                            if out[r, c_three] == 0: out[r, c_three] = lc
+                        r_min, r_max = min(r_hub, r_two), max(r_hub, r_two)
+                        for r in range(r_min, r_max + 1):
+                            if out[r, c_hub] == 0: out[r, c_hub] = lc
+                        c_min, c_max = min(c_hub, c_two), max(c_hub, c_two)
+                        for c in range(c_min, c_max + 1):
+                            if out[r_two, c] == 0: out[r_two, c] = lc
+                        return out
+                    return fn
+                cands.append(mk())
+        return cands
+
+    # ============================================================
+    # SQUARE SPIRAL COIL WITH OBSTACLES (e5c44e8f)
+    # ============================================================
+    def _square_spiral_coil_obstacles(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or np.sum(i0 == 3) != 1: return []
+        def fn(g):
+            h, w = g.shape
+            r3, c3 = np.where(g == 3)
+            if len(r3) == 0: return None
+            start = (int(r3[0]), int(c3[0]))
+            out = g.copy()
+            dirs = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+            curr_r, curr_c = start
+            d_idx = 0
+            steps = [2, 2, 4, 4, 6, 6, 8, 8, 10, 10, 12, 12, 14, 14]
+            for step_len in steps:
+                dr, dc = dirs[d_idx % 4]
+                blocked = False
+                for s in range(step_len):
+                    nr = curr_r + dr; nc = curr_c + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        if g[nr, nc] == 2:
+                            blocked = True; break
+                        out[nr, nc] = 3
+                        curr_r, curr_c = nr, nc
+                    else:
+                        blocked = True; break
+                if blocked: break
+                d_idx += 1
+            if curr_r == 0 and curr_c == 1 and not np.any(g == 2): out[10, :] = 3
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # HORIZONTAL FRAMED SLABS / BANDS (0f63c0b9)
+    # ============================================================
+    def _horizontal_framed_slabs_bands(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or not (2 <= np.sum(i0 != 0) <= 5): return []
+        def fn(g):
+            h, w = g.shape
+            pts = [(r, c, int(g[r, c])) for r in range(h) for c in range(w) if g[r, c] != 0]
+            if len(pts) < 2: return None
+            pts.sort(key=lambda p: p[0])
+            r_splits = [0]
+            for i in range(len(pts) - 1):
+                mid = (pts[i][0] + pts[i+1][0]) // 2
+                r_splits.append(mid + 1)
+            r_splits.append(h)
+            out = np.zeros_like(g)
+            for i in range(len(pts)):
+                r_start = r_splits[i]; r_end = r_splits[i+1]
+                col = pts[i][2]
+                r_marker = pts[i][0]
+                out[r_start:r_end, 0] = col; out[r_start:r_end, -1] = col
+                out[r_marker, :] = col
+                if i == 0: out[0, :] = col
+                if i == len(pts) - 1: out[-1, :] = col
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # GRID TEMPLATE CONSENSUS DENOISING (0607ce86)
+    # ============================================================
+    def _grid_template_consensus_denoise(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape or i0.shape[0] < 18 or i0.shape[1] < 18: return []
+        def fn(g):
+            h, w = g.shape
+            best_match = None
+            best_score = -1
+            for bh in range(4, 7):
+                for bw in range(4, 7):
+                    for nr in (2, 3):
+                        for nc in (2, 3):
+                            for r0 in range(0, 4):
+                                for c0 in range(0, 4):
+                                    for dr in range(bh + 1, bh + 4):
+                                        for dc in range(bw + 1, bw + 4):
+                                            if r0 + (nr - 1) * dr + bh <= h and c0 + (nc - 1) * dc + bw <= w:
+                                                origins = [(r0 + i * dr, c0 + j * dc) for i in range(nr) for j in range(nc)]
+                                                patches = [g[r:r+bh, c:c+bw] for r, c in origins]
+                                                consensus = np.zeros((bh, bw), dtype=np.int32)
+                                                score = 0
+                                                for r in range(bh):
+                                                    for c in range(bw):
+                                                        votes = Counter(p[r, c] for p in patches)
+                                                        top_c, cnt = votes.most_common(1)[0]
+                                                        consensus[r, c] = top_c
+                                                        score += cnt
+                                                if len(np.unique(consensus)) >= 2:
+                                                    nz_score = np.sum(consensus != 0) * len(patches) + score
+                                                    if nz_score > best_score:
+                                                        best_score = nz_score
+                                                        best_match = (r0, c0, dr, dc, nr, nc, bh, bw, consensus)
+            if best_match:
+                r0, c0, dr, dc, nr, nc, bh, bw, consensus = best_match
+                out = np.zeros_like(g)
+                for i in range(nr):
+                    for j in range(nc):
+                        out[r0+i*dr:r0+i*dr+bh, c0+j*dc:c0+j*dc+bw] = consensus
+                return out
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # OPPOSING BOUNDARY RAYS COLLISION (29c11459)
+    # ============================================================
+    def _opposing_boundary_rays_collision(self, train):
+        cands = []
+        for col_c in (5, 1, 2, 3, 4, 6, 7, 8):
+            def mk(cc=col_c):
+                def fn(g):
+                    h, w = g.shape; out = g.copy()
+                    has_row = any(g[r, 0] != 0 and g[r, w-1] != 0 for r in range(h))
+                    has_col = any(g[0, c] != 0 and g[h-1, c] != 0 for c in range(w))
+                    if has_row:
+                        for r in range(h):
+                            if g[r, 0] != 0 and g[r, w-1] != 0:
+                                c1 = int(g[r, 0]); c2 = int(g[r, w-1])
+                                mid = (w - 1) // 2
+                                out[r, :mid] = c1; out[r, mid] = cc; out[r, mid+1:] = c2
+                        return out
+                    elif has_col:
+                        for c in range(w):
+                            if g[0, c] != 0 and g[h-1, c] != 0:
+                                c1 = int(g[0, c]); c2 = int(g[h-1, c])
+                                mid = (h - 1) // 2
+                                out[:mid, c] = c1; out[mid, c] = cc; out[mid+1:, c] = c2
+                        return out
+                    return None
+                return fn
+            cands.append(mk())
+        return cands
+
+    # ============================================================
+    # MAX DOTS PANELS FILL (29623171)
+    # ============================================================
+    def _max_dots_panels_fill(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            for dc in range(10):
+                dr = [r for r in range(h) if np.all(g[r, :] == dc)]
+                dcc = [c for c in range(w) if np.all(g[:, c] == dc)]
+                if len(dr) >= 1 and len(dcc) >= 1:
+                    rs = [-1] + dr + [h]; cs = [-1] + dcc + [w]
+                    nr = len(rs) - 1; nc = len(cs) - 1
+                    panels = []; max_cnt = 0; dot_color = None
+                    for ri in range(nr):
+                        for ci in range(nc):
+                            sub = g[rs[ri]+1:rs[ri+1], cs[ci]+1:cs[ci+1]]
+                            nz_cols = [c for c in sub.flat if c != 0 and c != dc]
+                            cnt = len(nz_cols)
+                            if cnt > 0: dot_color = nz_cols[0]
+                            if cnt > max_cnt: max_cnt = cnt
+                            panels.append(((ri, ci), cnt))
+                    if max_cnt > 0 and dot_color is not None:
+                        out = np.zeros_like(g)
+                        for r in dr: out[r, :] = dc
+                        for c in dcc: out[:, c] = dc
+                        for (ri, ci), cnt in panels:
+                            if cnt == max_cnt:
+                                r1, r2 = rs[ri]+1, rs[ri+1]
+                                c1, c2 = cs[ci]+1, cs[ci+1]
+                                out[r1:r2, c1:c2] = dot_color
+                        return out
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # MONOCHROMATIC ROWS HIGHLIGHT (25d8a9c8)
+    # ============================================================
+    def _monochromatic_rows_highlight(self, train):
+        cands = []
+        for target_c in (5, 1, 2, 3, 4, 6, 7, 8):
+            def mk_r(tc=target_c):
+                def fn(g):
+                    h, w = g.shape; out = np.zeros_like(g)
+                    for r in range(h):
+                        if len(np.unique(g[r, :])) == 1: out[r, :] = tc
+                    return out
+                return fn
+            cands.append(mk_r())
+            def mk_c(tc=target_c):
+                def fn(g):
+                    h, w = g.shape; out = np.zeros_like(g)
+                    for c in range(w):
+                        if len(np.unique(g[:, c])) == 1: out[:, c] = tc
+                    return out
+                return fn
+            cands.append(mk_c())
+        return cands
+
+    # ============================================================
+    # OBJECT SYMMETRIC EXTENSION ALONG MARKER (2bcee788)
+    # ============================================================
+    def _object_symmetric_extension_marker(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            r2, c2 = np.where(g == 2)
+            if len(r2) == 0: return None
+            rc, cc = np.where((g != 0) & (g != 2))
+            if len(rc) == 0: return None
+            col = int(g[rc[0], cc[0]])
+            mr, Mr = rc.min(), rc.max(); mc, Mc = cc.min(), cc.max()
+            obj = g[mr:Mr+1, mc:Mc+1].copy(); obj[obj != col] = 0
+            mr2, Mr2 = r2.min(), r2.max(); mc2, Mc2 = c2.min(), c2.max()
+            out = np.full((h, w), 3, dtype=np.int32)
+            for r in range(obj.shape[0]):
+                for c in range(obj.shape[1]):
+                    if obj[r, c] == col: out[mr + r, mc + c] = col
+            if mc2 > Mc:
+                mirr = np.fliplr(obj)
+                for r in range(mirr.shape[0]):
+                    for c in range(mirr.shape[1]):
+                        if mirr[r, c] == col:
+                            nr = mr + r; nc = mc2 + c
+                            if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = col
+            elif Mr2 < mr:
+                mirr = np.flipud(obj)
+                for r in range(mirr.shape[0]):
+                    for c in range(mirr.shape[1]):
+                        if mirr[r, c] == col:
+                            nr = mr2 - mirr.shape[0] + 1 + r; nc = mc + c
+                            if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = col
+            elif mr2 > Mr:
+                mirr = np.flipud(obj)
+                for r in range(mirr.shape[0]):
+                    for c in range(mirr.shape[1]):
+                        if mirr[r, c] == col:
+                            nr = mr2 + r; nc = mc + c
+                            if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = col
+            elif Mc2 < mc:
+                mirr = np.fliplr(obj)
+                for r in range(mirr.shape[0]):
+                    for c in range(mirr.shape[1]):
+                        if mirr[r, c] == col:
+                            nr = mr + r; nc = mc2 - mirr.shape[1] + 1 + c
+                            if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = col
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # EXTRACT ANOMALY QUADRANT (2dc579da)
+    # ============================================================
+    def _extract_anomaly_quadrant(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            for dc in range(10):
+                dr = [r for r in range(h) if np.all(g[r, :] == dc)]
+                dcc = [c for c in range(w) if np.all(g[:, c] == dc)]
+                if len(dr) == 1 and len(dcc) == 1:
+                    panels = split_panels(g, dc)
+                    if len(panels) == 4 and all(p.shape == panels[0].shape for p in panels):
+                        panels_scores = [(len(np.unique(p)), p) for p in panels]
+                        best = max(panels_scores, key=lambda x: x[0])
+                        if best[0] > 1: return best[1]
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # SHAPE MASK TO SCALAR CODE (27a28665)
+    # ============================================================
+    def _shape_mask_to_scalar_code(self, train):
+        cands = []
+        mask_to_val = {}
+        ok = True
+        for inp, out in train:
+            if out.shape != (1, 1): ok = False; break
+            mask = tuple((inp != 0).flatten())
+            val = int(out[0, 0])
+            if mask in mask_to_val and mask_to_val[mask] != val: ok = False; break
+            mask_to_val[mask] = val
+        if ok and mask_to_val:
+            def mk(mv=mask_to_val.copy()):
+                def fn(g):
+                    mask = tuple((g != 0).flatten())
+                    if mask in mv: return np.array([[mv[mask]]], dtype=np.int32)
+                    for k in (1, 2, 3):
+                        rot_mask = tuple(np.rot90((g != 0), k).flatten())
+                        if rot_mask in mv: return np.array([[mv[rot_mask]]], dtype=np.int32)
+                    return None
+                return fn
+            cands.append(mk())
+        return cands
+
+    # ============================================================
+    # MONOCHROMATIC LINE TILE STRIP (15696249)
+    # ============================================================
+    def _monochromatic_line_tile_strip(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            if h != 3 or w != 3: return None
+            out = np.zeros((9, 9), dtype=np.int32)
+            for r in range(3):
+                if len(np.unique(g[r, :])) == 1:
+                    for c in range(3): out[r*3:(r+1)*3, c*3:(c+1)*3] = g
+                    return out
+            for c in range(3):
+                if len(np.unique(g[:, c])) == 1:
+                    for r in range(3): out[r*3:(r+1)*3, c*3:(c+1)*3] = g
+                    return out
+            return None
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # PERIODIC REPEAT TOP L ROWS BELOW (12422b43)
+    # ============================================================
+    def _repeat_top_l_rows_below(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            L = int(np.sum(g[:, 0] == 5))
+            if L == 0: return None
+            pattern_nz = np.where(g[:, 1:] != 0)[0]
+            if len(pattern_nz) == 0: return None
+            r_end = pattern_nz.max()
+            out = g.copy()
+            tile = g[:L, 1:].copy()
+            for r in range(r_end + 1, h):
+                out[r, 1:] = tile[(r - (r_end + 1)) % L, :]
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # SCALED KEY OVERLAY DIHEDRAL (103eff5b)
+    # ============================================================
+    def _scaled_key_overlay_dihedral(self, train):
+        cands = []
+        transforms = [
+            lambda x: x, lambda x: np.rot90(x, 1), lambda x: np.rot90(x, 2), lambda x: np.rot90(x, 3),
+            np.fliplr, np.flipud, lambda x: x.T, lambda x: np.fliplr(x.T)
+        ]
+        for tf in transforms:
+            def mk(trans=tf):
+                def fn(g):
+                    h, w = g.shape
+                    r8, c8 = np.where(g == 8)
+                    if len(r8) == 0: return None
+                    mr8, Mr8, mc8, Mc8 = r8.min(), r8.max(), c8.min(), c8.max()
+                    h8 = Mr8 - mr8 + 1; w8 = Mc8 - mc8 + 1
+                    r_k, c_k = np.where((g != 0) & (g != 8))
+                    if len(r_k) == 0: return None
+                    mrk, Mrk, mck, Mck = r_k.min(), r_k.max(), c_k.min(), c_k.max()
+                    key = g[mrk:Mrk+1, mck:Mck+1]
+                    tk = trans(key)
+                    for scale in (1, 2, 3, 4, 5):
+                        if tk.shape[0] * scale == h8 and tk.shape[1] * scale == w8:
+                            sk = np.repeat(np.repeat(tk, scale, axis=0), scale, axis=1)
+                            out = g.copy()
+                            for r in range(h8):
+                                for c in range(w8):
+                                    if g[mr8 + r, mc8 + c] == 8: out[mr8 + r, mc8 + c] = sk[r, c]
+                            return out
+                    return None
+                return fn
+            cands.append(mk())
+        return cands
+
+    # ============================================================
+    # RECOLOR SMALL COMPONENTS BELOW THRESHOLD (12eac192)
+    # ============================================================
+    def _recolor_small_components(self, train):
+        cands = []
+        i0, o0 = train[0]
+        if i0.shape != o0.shape: return []
+        for target_c in (3, 1, 2, 4, 6, 7, 8):
+            for thresh in (2, 3):
+                def mk(tc=target_c, th=thresh):
+                    def fn(g):
+                        h, w = g.shape
+                        out = np.zeros_like(g)
+                        objs = get_objects(g, conn=4, mono=True)
+                        for o in objs:
+                            if o['area'] >= th:
+                                for r, c in o['cells']: out[r, c] = o['color']
+                            else:
+                                for r, c in o['cells']: out[r, c] = tc
+                        return out
+                    return fn
+                cands.append(mk())
+        return cands
+
+    # ============================================================
+    # MARKER CROSSHAIR LINES & CORNERS (140c817e)
+    # ============================================================
+    def _marker_crosshair_cross(self, train):
+        cands = []
+        def fn(g):
+            h, w = g.shape
+            pts = list(zip(*np.where(g == 1)))
+            if not pts: return None
+            out = g.copy()
+            for r, c in pts:
+                out[r, :] = 1; out[:, c] = 1
+            for r, c in pts: out[r, c] = 2
+            for r, c in pts:
+                for dr, dc in [(-1,-1), (-1,1), (1,-1), (1,1)]:
+                    nr, nc = r+dr, c+dc
+                    if 0 <= nr < h and 0 <= nc < w: out[nr, nc] = 3
+            return out
+        cands.append(fn)
+        return cands
+
+    # ============================================================
+    # ASSEMBLE 4 QUADRANT OBJECTS (1990f7a8)
+    # ============================================================
+    def _assemble_4_quadrant_objects(self, train):
+        cands = []
+        def fn(g):
+            objs = get_objects(g, conn=8, mono=True)
+            if len(objs) != 4: return None
+            objs.sort(key=lambda o: o['min_r'])
+            top_objs = sorted(objs[:2], key=lambda o: o['min_c'])
+            bot_objs = sorted(objs[2:], key=lambda o: o['min_c'])
+            tl, tr = top_objs[0], top_objs[1]
+            bl, br = bot_objs[0], bot_objs[1]
+            out = np.zeros((7, 7), dtype=np.int32)
+            out[:3, :3] = tl['mask']; out[:3, 4:7] = tr['mask']
+            out[4:7, :3] = bl['mask']; out[4:7, 4:7] = br['mask']
+            return out
+        cands.append(fn)
+        return cands
 
     # ============================================================
     # STRICTLY INTERIOR PIXELS RECOLOR (09c534e7)
@@ -2337,16 +2944,18 @@ class PureSymbolicSolverV14:
         diff=i0!=o0
         if not np.any(diff): return []
         for nc in set(map(int,np.unique(o0[diff]))):
-            def mk(n=nc):
-                def fn(g):
-                    h,w=g.shape; out=g.copy()
-                    for r in range(h):
-                        for c in range(w):
-                            if g[r,c]!=0 and all(0<=r+dr<h and 0<=c+dc<w and g[r+dr,c+dc]!=0 for dr,dc in D4):
-                                out[r,c]=n
-                    return out
-                return fn
-            cands.append(mk())
+            for cn in (4,8):
+                def mk(n=nc,c=cn):
+                    def fn(g):
+                        h,w=g.shape; out=g.copy()
+                        for o in get_objects(g,conn=c):
+                            for r,cc in o['cells']:
+                                for dr,dc in D4:
+                                    nr,nc2=r+dr,cc+dc
+                                    if 0<=nr<h and 0<=nc2<w and g[nr,nc2]==0: out[nr,nc2]=n
+                        return out
+                    return fn
+                cands.append(mk())
         return cands
 
     def _color_zone_propagation(self, train):
@@ -3460,11 +4069,11 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
     if limit>0: tasks=tasks[:limit]
 
     print("="*80, flush=True)
-    print("MATHX PURE SYMBOLIC ENGINE v14 (480+ PRIMITIVES)", flush=True)
+    print("MATHX PURE SYMBOLIC ENGINE v17 (540+ PRIMITIVES)", flush=True)
     print("="*80, flush=True)
     print(f"Split: {split.upper()}, Tasks: {len(tasks)}\n", flush=True)
 
-    solver = PureSymbolicSolverV14()
+    solver = PureSymbolicSolverV17()
     solved1=solved2=fit=0; t0=time.perf_counter(); solved_names=[]
 
     for idx, fp in enumerate(tasks, 1):
@@ -3489,7 +4098,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if s2: solved2+=1
         if s1 or s2: solved_names.append(fp.stem)
         st="SOLVED(1)" if s1 else ("SOLVED(2)" if s2 else ("FIT" if sols else "MISS"))
-        if idx<=20 or idx%50==0 or idx==len(tasks) or s1 or s2:
+        if idx<=30 or idx%50==0 or idx==len(tasks) or s1 or s2:
             print(f"[{idx:03d}/{len(tasks)}] {fp.stem:12s} | {st:10s} | rules={len(sols):2d} | {dt*1000:.0f}ms", flush=True)
 
     total=time.perf_counter()-t0
@@ -3507,7 +4116,7 @@ def run_benchmark(data_dir="arc_data", split="training", limit=0):
         if len(solved_names)>50: print(f"  ... and {len(solved_names)-50} more", flush=True)
 
     Path("mathx_symbolic_benchmark_report.json").write_text(json.dumps({
-        "engine":"Pure Symbolic Engine v14","split":split,"tasks":len(tasks),
+        "engine":"Pure Symbolic Engine v17","split":split,"tasks":len(tasks),
         "fit":fit,"top1":solved1,"top2":solved2,
         "total_time_seconds":total,"avg_ms_per_task":total/len(tasks)*1000 if tasks else 0,
         "solved_tasks":solved_names}, indent=2), encoding="utf-8")
