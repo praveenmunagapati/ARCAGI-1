@@ -52,6 +52,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
+from ptrm import PTRMConfig, PTRMRolloutEngine, ARCPTRMEvaluator
+
 
 # ============================================================
 # CONSTANTS
@@ -508,19 +510,40 @@ class SwiGLU(nn.Module):
 # ============================================================
 class TRMBlock(nn.Module):
     """
-    Single Transformer block for TRM.
-    Post-norm architecture: x = RMSNorm(x + Attn(x)), x = RMSNorm(x + FFN(x))
+    Single Transformer / MLP block for TRM.
+    TRM-Att: Post-norm Self-Attention + SwiGLU FFN
+    TRM-MLP: Post-norm Sequence SwiGLU + Hidden SwiGLU FFN
     """
 
-    def __init__(self, hidden_size: int, num_heads: int, expansion: float, rms_eps: float = 1e-5):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        expansion: float,
+        rms_eps: float = 1e-5,
+        mlp_t: bool = False,
+        seq_len: int = 916,
+    ):
         super().__init__()
-        self.attn = Attention(hidden_size, num_heads)
+        self.mlp_t = mlp_t
+        if mlp_t:
+            self.seq_mlp = SwiGLU(seq_len, expansion)
+            self.attn = None
+        else:
+            self.attn = Attention(hidden_size, num_heads)
+            self.seq_mlp = None
         self.ffn = SwiGLU(hidden_size, expansion)
         self.rms_eps = rms_eps
 
     def forward(self, x: torch.Tensor, cos_sin=None) -> torch.Tensor:
-        # Self-attention with post-norm residual
-        x = rms_norm(x + self.attn(x, cos_sin=cos_sin), eps=self.rms_eps)
+        if self.mlp_t:
+            # Sequence MLP (transpose [B, L, D] -> [B, D, L])
+            x_t = x.transpose(1, 2)
+            out = self.seq_mlp(x_t).transpose(1, 2)
+            x = rms_norm(x + out, eps=self.rms_eps)
+        else:
+            # Self-attention with post-norm residual
+            x = rms_norm(x + self.attn(x, cos_sin=cos_sin), eps=self.rms_eps)
         # Feed-forward with post-norm residual
         x = rms_norm(x + self.ffn(x), eps=self.rms_eps)
         return x
@@ -593,6 +616,7 @@ class TRMConfig:
     puzzle_emb_dim: int = 512    # puzzle embedding dimension
     puzzle_emb_len: int = 16     # number of puzzle embedding positions
     forward_dtype: str = "float32"  # Use float32 for CPU compatibility, bfloat16 for GPU
+    mlp_t: bool = False          # Use MLP on sequence length (TRM-MLP) instead of Attention (TRM-Att)
 
 
 class TRMInner(nn.Module):
@@ -601,9 +625,9 @@ class TRMInner(nn.Module):
 
     Architecture:
     - Input embedding: token_embed(x) + puzzle_embed + position_embed
-    - Single 2-layer Transformer network (shared for latent and solution updates)
+    - Single 2-layer network (shared for latent and solution updates)
     - LM head: projects y back to vocab logits
-    - Q head: predicts halting probability
+    - Q head: predicts halting probability / correctness
 
     Forward pass (per supervision step):
         For T cycles (T-1 without grad, 1 with grad):
@@ -639,16 +663,23 @@ class TRMInner(nn.Module):
         # Total sequence length including puzzle embedding prefix
         total_seq_len = SEQ_LEN + self.puzzle_emb_len
 
-        # Rotary Position Embedding
+        # Rotary Position Embedding (for attention variant)
         self.rotary_emb = RotaryEmbedding(
             dim=D // config.num_heads,
             max_position_embeddings=total_seq_len,
             base=config.rope_theta,
         )
 
-        # The single shared network (2-layer Transformer)
+        # The single shared network (2-layer Transformer or MLP)
         self.net = TRMReasoningModule([
-            TRMBlock(D, config.num_heads, config.expansion, config.rms_eps)
+            TRMBlock(
+                hidden_size=D,
+                num_heads=config.num_heads,
+                expansion=config.expansion,
+                rms_eps=config.rms_eps,
+                mlp_t=config.mlp_t,
+                seq_len=total_seq_len,
+            )
             for _ in range(config.num_layers)
         ])
 
@@ -1228,16 +1259,22 @@ def evaluate(
     num_aug: int = 100,
     device: torch.device = torch.device("cpu"),
     max_tasks: int = 0,
+    use_ptrm: bool = False,
+    ptrm_k: int = 25,
+    ptrm_sigma: float = 0.2,
+    ptrm_depth: int = 16,
+    ptrm_selector: str = "best_q",
 ) -> float:
     """
-    Evaluate TRM on ARC tasks with majority voting.
+    Evaluate TRM on ARC tasks with test-time compute scaling and majority voting.
 
-    For each test example:
-    1. Apply `num_aug` augmentations
-    2. Run full N_sup supervision steps (no ACT halting)
-    3. De-augment predictions
-    4. Take majority vote
-    5. Compare to ground truth
+    Standard TRM (use_ptrm=False):
+        Runs 1 deterministic rollout per augmentation and votes across augmentations.
+
+    Probabilistic TRM (use_ptrm=True, arXiv:2605.19943v1):
+        Runs K parallel stochastic rollouts with Gaussian noise sigma per augmentation,
+        picks the best rollout per augmentation via Q-head scoring, then votes across
+        augmentations.
     """
     model.eval()
     fwd_dtype = getattr(torch, config.forward_dtype)
@@ -1245,11 +1282,24 @@ def evaluate(
     if max_tasks > 0:
         tasks = tasks[:max_tasks]
 
-    total_correct = 0
+    total_correct_top1 = 0
+    total_correct_top2 = 0
     total_tests = 0
 
-    print(f"\n  Evaluating on {len(tasks)} tasks, {num_aug} augmentations each...")
+    mode_str = f"PTRM (K={ptrm_k}, sigma={ptrm_sigma}, D={ptrm_depth})" if use_ptrm else "Deterministic TRM"
+    print(f"\n  Evaluating on {len(tasks)} tasks using {mode_str}, {num_aug} augmentations each...")
     t0 = time.perf_counter()
+
+    ptrm_engine = None
+    if use_ptrm:
+        ptrm_cfg = PTRMConfig(
+            num_rollouts=ptrm_k,
+            supervision_steps=ptrm_depth if ptrm_depth > 0 else config.halt_max_steps,
+            noise_scale=ptrm_sigma,
+            selector=ptrm_selector,
+            forward_dtype=config.forward_dtype,
+        )
+        ptrm_engine = PTRMRolloutEngine(ptrm_cfg)
 
     for task_idx, task in enumerate(tasks):
         for test_idx, (test_inp, test_out) in enumerate(task.test_examples):
@@ -1257,7 +1307,7 @@ def evaluate(
             if test_out.shape == (1, 1) and test_out[0, 0] == 0:
                 continue
 
-            predictions = []
+            candidates_map = defaultdict(lambda: {"count": 0, "sum_q": 0.0, "grid": None})
 
             for aug_idx in range(num_aug):
                 # Create all examples for this task (train + test)
@@ -1274,62 +1324,26 @@ def evaluate(
                 )
                 np.random.set_state(rng_state)
 
-                # Process each example as a separate forward pass
-                # The test example is the last one
+                # Process test example as forward pass
                 aug_test_inp, aug_test_out = aug_examples[-1]
 
                 # Convert to sequence
                 inp_seq, lbl_seq = grid_to_seq(aug_test_inp, aug_test_out, do_translation=False)
                 inp_tensor = torch.tensor(inp_seq, dtype=torch.long).unsqueeze(0).to(device)
-                lbl_tensor = torch.tensor(lbl_seq, dtype=torch.long).unsqueeze(0).to(device)
                 pid_tensor = torch.zeros(1, dtype=torch.long, device=device)
 
-                # Run full supervision (no ACT)
-                carry = model.inner.empty_carry(1)
-                carry = TRMCarry(y=carry.y.to(device), z=carry.z.to(device))
-                halted = torch.ones(1, dtype=torch.bool, device=device)
-                carry = model.inner.reset_carry(carry, halted)
-
-                with torch.amp.autocast(device.type, enabled=(device.type == "cuda"), dtype=fwd_dtype if fwd_dtype != torch.float32 else torch.float32):
-                    for _ in range(config.halt_max_steps):
-                        carry, logits, q_halt = model.inner(carry, inp_tensor, pid_tensor)
-
-                # Get prediction
-                pred_seq = torch.argmax(logits[0], dim=-1).cpu().numpy()
-                pred_grid = seq_to_grid(pred_seq)
-
-                # De-augment
-                if aug_idx > 0:
-                    try:
-                        pred_grid = inverse_augment_grid(pred_grid.astype(np.uint8), trans_id, color_perm)
-                    except Exception:
-                        continue
-
-                predictions.append(pred_grid.tobytes() + b"|" + str(pred_grid.shape).encode())
-
-            # Majority vote
-            if predictions:
-                counter = Counter(predictions)
-                most_common_key = counter.most_common(1)[0][0]
-                # Reconstruct grid from the most common prediction
-                # Find a prediction that matches this key
-                for aug_idx in range(num_aug):
-                    all_examples = task.train_examples + [(test_inp, test_out)]
-                    rng_state = np.random.get_state()
-                    np.random.seed(task_idx * 100000 + aug_idx + 999999)
-                    aug_examples, trans_id, color_perm = augment_arc_puzzle(
-                        all_examples,
-                        do_color_perm=(aug_idx > 0),
-                        do_dihedral=(aug_idx > 0),
-                        do_translation=False,
+                if use_ptrm and ptrm_engine is not None:
+                    # Run K stochastic rollouts
+                    rollout_res = ptrm_engine.run_rollouts(
+                        model=model,
+                        inputs=inp_tensor,
+                        puzzle_ids=pid_tensor,
                     )
-                    np.random.set_state(rng_state)
-
-                    aug_test_inp, aug_test_out = aug_examples[-1]
-                    inp_seq, lbl_seq = grid_to_seq(aug_test_inp, aug_test_out, do_translation=False)
-                    inp_tensor = torch.tensor(inp_seq, dtype=torch.long).unsqueeze(0).to(device)
-                    pid_tensor = torch.zeros(1, dtype=torch.long, device=device)
-
+                    best_k = rollout_res.best_q_indices[0].item()
+                    pred_seq = rollout_res.all_preds[0, best_k].cpu().numpy()
+                    pred_q = rollout_res.all_q_scores[0, best_k].item()
+                else:
+                    # Run standard deterministic supervision (no ACT)
                     carry = model.inner.empty_carry(1)
                     carry = TRMCarry(y=carry.y.to(device), z=carry.z.to(device))
                     halted = torch.ones(1, dtype=torch.bool, device=device)
@@ -1340,43 +1354,56 @@ def evaluate(
                             carry, logits, q_halt = model.inner(carry, inp_tensor, pid_tensor)
 
                     pred_seq = torch.argmax(logits[0], dim=-1).cpu().numpy()
-                    pred_grid = seq_to_grid(pred_seq)
+                    pred_q = q_halt[0].item()
 
-                    if aug_idx > 0:
-                        try:
-                            pred_grid = inverse_augment_grid(pred_grid.astype(np.uint8), trans_id, color_perm)
-                        except Exception:
-                            continue
+                pred_grid = seq_to_grid(pred_seq)
 
-                    key = pred_grid.tobytes() + b"|" + str(pred_grid.shape).encode()
-                    if key == most_common_key:
-                        final_pred = pred_grid
-                        break
-                else:
-                    final_pred = np.zeros_like(test_out)
+                # De-augment
+                if aug_idx > 0:
+                    try:
+                        pred_grid = inverse_augment_grid(pred_grid.astype(np.uint8), trans_id, color_perm)
+                    except Exception:
+                        continue
 
-                # Check correctness
-                is_correct = (final_pred.shape == test_out.shape and np.array_equal(final_pred, test_out))
-                if is_correct:
-                    total_correct += 1
+                pred_grid = np.array(pred_grid, dtype=np.int64)
+                grid_key = pred_grid.tobytes() + b"|" + str(pred_grid.shape).encode()
+                candidates_map[grid_key]["count"] += 1
+                candidates_map[grid_key]["sum_q"] += pred_q
+                candidates_map[grid_key]["grid"] = pred_grid
+
+            # Majority / Q-weighted vote across augmentations
+            if candidates_map:
+                sorted_candidates = sorted(
+                    candidates_map.values(),
+                    key=lambda c: (c["count"], c["sum_q"] / max(1, c["count"])),
+                    reverse=True,
+                )
+                top_grids = [c["grid"] for c in sorted_candidates if c["grid"] is not None]
+
+                if len(top_grids) > 0 and top_grids[0].shape == test_out.shape and np.array_equal(top_grids[0], test_out):
+                    total_correct_top1 += 1
+                    total_correct_top2 += 1
+                elif len(top_grids) > 1 and top_grids[1].shape == test_out.shape and np.array_equal(top_grids[1], test_out):
+                    total_correct_top2 += 1
 
             total_tests += 1
 
         if (task_idx + 1) % max(1, len(tasks) // 10) == 0:
-            print(f"    [{task_idx + 1}/{len(tasks)}] correct={total_correct}/{total_tests}")
+            print(f"    [{task_idx + 1}/{len(tasks)}] Top-1={total_correct_top1}/{total_tests}, Top-2={total_correct_top2}/{total_tests}")
 
     dt = time.perf_counter() - t0
-    accuracy = total_correct / max(1, total_tests)
-    print(f"  Evaluation: {total_correct}/{total_tests} = {accuracy:.4f} ({dt:.1f}s)")
+    acc_top1 = total_correct_top1 / max(1, total_tests)
+    acc_top2 = total_correct_top2 / max(1, total_tests)
+    print(f"  Evaluation Complete: Top-1 = {total_correct_top1}/{total_tests} ({acc_top1*100:.2f}%), Top-2 = {total_correct_top2}/{total_tests} ({acc_top2*100:.2f}%) [{dt:.1f}s]")
 
-    return accuracy
+    return acc_top1
 
 
 # ============================================================
 # MAIN
 # ============================================================
 def main():
-    parser = argparse.ArgumentParser(description="TRM: Tiny Recursive Model for ARC-AGI (arXiv:2510.04871v1)")
+    parser = argparse.ArgumentParser(description="TRM: Tiny Recursive Model for ARC-AGI (arXiv:2510.04871v1 & PTRM arXiv:2605.19943v1)")
 
     parser.add_argument("--mode", choices=["train", "eval"], default="train", help="Train or evaluate")
     parser.add_argument("--data", default="arc_data", help="Path to ARC data directory")
@@ -1396,12 +1423,20 @@ def main():
     parser.add_argument("--no-ema", action="store_true", help="Disable EMA")
 
     # Architecture hyperparameters (paper defaults)
+    parser.add_argument("--arch", choices=["trm-att", "trm-mlp"], default="trm-att", help="Architecture variant: trm-att (Transformer) or trm-mlp (MLP)")
     parser.add_argument("--hidden-size", type=int, default=512, help="Hidden dimension")
     parser.add_argument("--num-heads", type=int, default=8, help="Number of attention heads")
-    parser.add_argument("--num-layers", type=int, default=2, help="Number of Transformer layers")
+    parser.add_argument("--num-layers", type=int, default=2, help="Number of Transformer/MLP layers")
     parser.add_argument("--n-latent", type=int, default=6, help="Latent reasoning cycles (L_cycles)")
     parser.add_argument("--n-deep", type=int, default=3, help="Deep recursion cycles (H_cycles)")
     parser.add_argument("--halt-max", type=int, default=16, help="Max supervision steps (N_sup)")
+
+    # PTRM Inference hyperparameters (arXiv:2605.19943v1)
+    parser.add_argument("--use-ptrm", action="store_true", help="Enable Probabilistic TRM (PTRM) test-time compute scaling")
+    parser.add_argument("--ptrm-k", type=int, default=25, help="Number of parallel stochastic rollouts K (paper default: 25)")
+    parser.add_argument("--ptrm-sigma", type=float, default=0.2, help="Gaussian noise scale sigma injected at each supervision step (default: 0.2)")
+    parser.add_argument("--ptrm-depth", type=int, default=16, help="Supervision depth D for test-time scaling (default: 16)")
+    parser.add_argument("--ptrm-selector", choices=["best_q", "mode", "both"], default="best_q", help="Rollout selection strategy")
 
     # Misc
     parser.add_argument("--device", default="auto", help="Device: auto, cpu, cuda, cuda:0, etc.")
@@ -1451,12 +1486,13 @@ def main():
         fwd_dtype = "bfloat16" if (device.type == "cuda" and torch.cuda.is_bf16_supported()) else "float32"
 
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-        config = TRMConfig(**ckpt["config"])
+        config_dict = dict(ckpt.get("config", {}))
+        config_dict["mlp_t"] = (args.arch == "trm-mlp") or config_dict.get("mlp_t", False)
+        config = TRMConfig(**config_dict)
         config.forward_dtype = fwd_dtype
 
         eval_tasks = load_arc_tasks(args.data, "evaluation")
 
-        # Need to know num_puzzle_ids to instantiate model
         num_puzzle_ids = 1  # Dummy for eval (puzzle embeddings not used with pid=0)
         model = TRM(config, num_puzzle_ids=num_puzzle_ids)
         model.load_state_dict(ckpt["model"], strict=False)
@@ -1466,6 +1502,11 @@ def main():
             model, eval_tasks, config,
             num_aug=args.num_aug,
             device=device,
+            use_ptrm=args.use_ptrm,
+            ptrm_k=args.ptrm_k,
+            ptrm_sigma=args.ptrm_sigma,
+            ptrm_depth=args.ptrm_depth,
+            ptrm_selector=args.ptrm_selector,
         )
         print(f"\nFinal evaluation accuracy: {accuracy:.4f} ({accuracy*100:.1f}%)")
 
