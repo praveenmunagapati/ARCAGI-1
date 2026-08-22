@@ -1,0 +1,4 @@
+__pycache__/
+trm_checkpoints/
+venv/
+TRM_reference/
