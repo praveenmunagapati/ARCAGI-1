@@ -1,4 +1,4 @@
-"""
+r"""
 PTRM Benchmark Runner & Ablation Suite
 ======================================
 Reproduces experiments, scaling sweeps, and ablations from:
@@ -81,9 +81,9 @@ def generate_synthetic_sudoku_batch(
         # Apply random row/col band swaps
         for b in range(3):
             r_perm = rng.permutation(3) + b * 3
-            sol_grid = sol_grid[r_perm, :]
+            sol_grid[b * 3:(b + 1) * 3, :] = sol_grid[r_perm, :]
             c_perm = rng.permutation(3) + b * 3
-            sol_grid = sol_grid[:, c_perm]
+            sol_grid[:, b * 3:(b + 1) * 3] = sol_grid[:, c_perm]
 
         # Mask clues (set non-clues to 0)
         mask = rng.rand(grid_size, grid_size) < clue_ratio
