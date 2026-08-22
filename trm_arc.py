@@ -982,21 +982,27 @@ def train(
     print(f"Epochs: {epochs}")
     print(f"Architecture: {num_layers}-layer, D={hidden_size}, H={num_heads}")
     print(f"Recursion: n={n_latent_cycles}, T={n_deep_cycles}")
-    print(f"Deep supervision: max {halt_max_steps} steps")
-    print(f"Augmentations: {num_aug}")
     if smoke_test:
-        print("*** SMOKE TEST MODE ***")
+        print("*** SMOKE TEST MODE (Fast CPU Verification) ***", flush=True)
         num_aug = 2
-        epochs = min(epochs, 5)
+        epochs = min(epochs, 3)
         halt_max_steps = 2
         eval_interval = min(eval_interval, 2)
-    print("=" * 80)
+        hidden_size = min(hidden_size, 64)
+        num_heads = min(num_heads, 4)
+        num_layers = 1
+        n_latent_cycles = 2
+        n_deep_cycles = 2
+    print("=" * 80, flush=True)
 
     # Load data
-    print("\nLoading ARC tasks...")
+    print("\nLoading ARC tasks...", flush=True)
     train_tasks = load_arc_tasks(data_dir, "training")
     eval_tasks = load_arc_tasks(data_dir, "evaluation")
-    print(f"Training tasks: {len(train_tasks)}, Evaluation tasks: {len(eval_tasks)}")
+    if smoke_test:
+        train_tasks = train_tasks[:10]
+        eval_tasks = eval_tasks[:5]
+    print(f"Training tasks: {len(train_tasks)}, Evaluation tasks: {len(eval_tasks)}", flush=True)
 
     # Create datasets
     train_dataset = ARCPuzzleDataset(train_tasks, num_aug=num_aug, do_translation=True)
@@ -1440,6 +1446,7 @@ def main():
 
     # Misc
     parser.add_argument("--device", default="auto", help="Device: auto, cpu, cuda, cuda:0, etc.")
+    parser.add_argument("--max-tasks", type=int, default=0, help="Max tasks to evaluate (0 for all)")
     parser.add_argument("--smoke-test", action="store_true", help="Quick smoke test with minimal settings")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -1493,7 +1500,11 @@ def main():
 
         eval_tasks = load_arc_tasks(args.data, "evaluation")
 
-        num_puzzle_ids = 1  # Dummy for eval (puzzle embeddings not used with pid=0)
+        # Determine num_puzzle_ids from checkpoint state_dict
+        num_puzzle_ids = 1
+        if "model" in ckpt and "inner.puzzle_emb_weight" in ckpt["model"]:
+            num_puzzle_ids = ckpt["model"]["inner.puzzle_emb_weight"].shape[0]
+
         model = TRM(config, num_puzzle_ids=num_puzzle_ids)
         model.load_state_dict(ckpt["model"], strict=False)
         model = model.to(device)
@@ -1502,6 +1513,7 @@ def main():
             model, eval_tasks, config,
             num_aug=args.num_aug,
             device=device,
+            max_tasks=args.max_tasks,
             use_ptrm=args.use_ptrm,
             ptrm_k=args.ptrm_k,
             ptrm_sigma=args.ptrm_sigma,
