@@ -1,0 +1,82 @@
+{
+  "timestamp": "2026-08-22T21:12:00",
+  "config": {
+    "hidden_size": 64,
+    "num_heads": 4,
+    "expansion": 4.0,
+    "num_layers": 1,
+    "n_latent_cycles": 2,
+    "n_deep_cycles": 2,
+    "halt_max_steps": 16,
+    "halt_exploration_prob": 0.1,
+    "rms_eps": 1e-05,
+    "rope_theta": 10000.0,
+    "puzzle_emb_dim": 512,
+    "puzzle_emb_len": 16,
+    "forward_dtype": "float32",
+    "mlp_t": true
+  },
+  "width_scaling": {
+    "K": [
+      1,
+      3,
+      5
+    ],
+    "pass@K": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "best-Q@K": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "mode@K": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "time_per_sample_ms": [
+      75.70451999781653,
+      282.4703000020236,
+      433.82701999507844
+    ]
+  },
+  "noise_ablation": {
+    "sigma": [
+      0.0,
+      0.3
+    ],
+    "pass@K": [
+      0.0,
+      0.0
+    ],
+    "best-Q@K": [
+      0.0,
+      0.0
+    ],
+    "mode@K": [
+      0.0,
+      0.0
+    ]
+  },
+  "depth_scaling": {
+    "depth": [
+      2,
+      4
+    ],
+    "pass@K": [
+      0.0,
+      0.0
+    ],
+    "best-Q@K": [
+      0.0,
+      0.0
+    ],
+    "mode@K": [
+      0.0,
+      0.0
+    ]
+  }
+}

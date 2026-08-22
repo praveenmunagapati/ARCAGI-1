@@ -294,9 +294,13 @@ def main():
     parser.add_argument("--arch", choices=["trm-att", "trm-mlp"], default="trm-att", help="Architecture variant")
     parser.add_argument("--k-sweep", default="1,5,10,25", help="Comma-separated list of rollouts K")
     parser.add_argument("--sigma-sweep", default="0.0,0.2,0.6", help="Comma-separated list of noise scales sigma")
-    parser.add_argument("--depth-sweep", default="16,32", help="Comma-separated list of depths D")
+    parser.add_argument("--depth-sweep", default="4,8,16", help="Comma-separated list of depths D")
+    parser.add_argument("--eval-depth", type=int, default=4, help="Supervision depth D for width and noise sweeps")
     parser.add_argument("--num-samples", type=int, default=20, help="Number of benchmark samples")
     parser.add_argument("--num-aug", type=int, default=10, help="Number of ARC augmentations")
+    parser.add_argument("--hidden-size", type=int, default=64, help="Hidden dimension (default: 64 for fast CPU run)")
+    parser.add_argument("--n-latent", type=int, default=2, help="Latent reasoning cycles L_cycles")
+    parser.add_argument("--n-deep", type=int, default=2, help="Deep recursion cycles H_cycles")
     parser.add_argument("--device", default="auto", help="Device: auto, cpu, cuda")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output-json", default="ptrm_benchmark_report.json", help="Path to save output report")
@@ -309,19 +313,19 @@ def main():
     torch.manual_seed(args.seed)
 
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-    print("=" * 80)
-    print("Probabilistic Tiny Recursive Model (PTRM) - Benchmark Suite")
-    print("Paper: arXiv:2605.19943v1")
-    print(f"Device: {device} | Architecture: {args.arch}")
-    print("=" * 80)
+    print("=" * 80, flush=True)
+    print("Probabilistic Tiny Recursive Model (PTRM) - Benchmark Suite", flush=True)
+    print("Paper: arXiv:2605.19943v1", flush=True)
+    print(f"Device: {device} | Architecture: {args.arch} | D={args.eval_depth}", flush=True)
+    print("=" * 80, flush=True)
 
     # Initialize model
     config = TRMConfig(
-        hidden_size=256 if args.checkpoint is None else 512,
-        num_heads=8,
-        num_layers=2,
-        n_latent_cycles=4 if args.checkpoint is None else 6,
-        n_deep_cycles=2 if args.checkpoint is None else 3,
+        hidden_size=args.hidden_size if args.checkpoint is None else 512,
+        num_heads=4 if args.checkpoint is None else 8,
+        num_layers=1 if args.checkpoint is None else 2,
+        n_latent_cycles=args.n_latent,
+        n_deep_cycles=args.n_deep,
         halt_max_steps=16,
         forward_dtype="float32",
         mlp_t=(args.arch == "trm-mlp"),
@@ -329,7 +333,7 @@ def main():
 
     model = TRM(config, num_puzzle_ids=1)
     if args.checkpoint and os.path.exists(args.checkpoint):
-        print(f"Loading checkpoint: {args.checkpoint}")
+        print(f"Loading checkpoint: {args.checkpoint}", flush=True)
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model"], strict=False)
 
@@ -343,7 +347,7 @@ def main():
     report = {"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"), "config": config.__dict__}
 
     if args.suite in ("synthetic", "all"):
-        print("\nGenerating synthetic reasoning puzzle dataset...")
+        print("\nGenerating synthetic reasoning puzzle dataset...", flush=True)
         inputs, targets = generate_synthetic_sudoku_batch(
             num_samples=args.num_samples,
             seed=args.seed,
@@ -355,7 +359,7 @@ def main():
             targets=targets,
             k_list=k_list,
             sigma=0.2,
-            depth=16,
+            depth=args.eval_depth,
             device=device,
         )
         report["width_scaling"] = w_results
@@ -366,7 +370,7 @@ def main():
             targets=targets,
             sigma_list=sigma_list,
             K=max(k_list),
-            depth=16,
+            depth=args.eval_depth,
             device=device,
         )
         report["noise_ablation"] = n_results
